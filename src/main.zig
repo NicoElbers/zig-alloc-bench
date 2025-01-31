@@ -112,23 +112,147 @@ fn otherGpa(opts: runner.TestOpts) !profiling.ProfilingAllocator.Res {
     return runner.run(gpa.allocator(), opts);
 }
 
+pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
+    const T = @TypeOf(default);
+    comptime assert(@typeInfo(T) == .@"struct");
+
+    var opts = default;
+
+    const FieldEnum = std.meta.FieldEnum(T);
+
+    var args = try std.process.argsWithAllocator(alloc);
+    defer args.deinit();
+
+    _ = args.next();
+
+    args: while (args.next()) |arg| {
+        std.log.debug("arg: {s}", .{arg});
+
+        if (!std.mem.startsWith(u8, arg, "--")) fatal(arg, .{ .unknown = FieldEnum });
+        const field = std.meta.stringToEnum(FieldEnum, arg[2..]) orelse fatal(arg, .{ .unknown = FieldEnum });
+
+        std.log.debug("field tag: {s}", .{@tagName(field)});
+        inline for (comptime std.meta.tags(FieldEnum)) |tag| {
+            std.log.debug("tag: {s}", .{@tagName(tag)});
+
+            if (field == tag) {
+                std.log.debug("tag success: {s}", .{@tagName(tag)});
+
+                const FieldType = @FieldType(T, @tagName(tag));
+                switch (@typeInfo(FieldType)) {
+                    .@"enum" => |_| {
+                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
+
+                        std.log.debug("enum: {s}", .{@typeName(FieldType)});
+
+                        @field(opts, @tagName(tag)) = std.meta.stringToEnum(FieldType, value) orelse
+                            fatal(arg, .{ .unknown = FieldType });
+                    },
+                    .pointer => |info| {
+                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
+
+                        std.log.debug("ptr: {s}", .{@typeName(FieldType)});
+
+                        switch (info.size) {
+                            .slice => {
+                                if (FieldType == []const u8) {
+                                    @field(opts, @tagName(tag)) = value;
+                                } else if (info.child == []const u8) {
+                                    @compileError("No arrays of strings for now");
+                                } else @compileError("field type " ++ @typeName(FieldType) ++ " not supported");
+                            },
+                            else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
+                        }
+                    },
+
+                    else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
+                }
+
+                continue :args;
+            }
+        }
+
+        unreachable;
+    }
+
+    return opts;
+}
+fn fatal(arg: []const u8, comptime typ: union(enum) {
+    unknown: type,
+    needs_arg: type,
+    invalid: type,
+}) noreturn {
+    switch (typ) {
+        .unknown => |T| {
+            std.log.err("Unknown option '{s}'", .{arg});
+            std.log.err("Choose from:", .{});
+
+            for (std.meta.fieldNames(T)) |name| {
+                std.log.err("\t{s}", .{name});
+            }
+        },
+        .needs_arg => |T| {
+            std.log.err("Option '{s}' requires an argument", .{arg});
+            switch (@typeInfo(T)) {
+                .@"enum" => {
+                    std.log.err("Choose from:", .{});
+
+                    for (std.meta.fieldNames(T)) |name| {
+                        std.log.err("\t{s}", .{name});
+                    }
+                },
+                else => {
+                    // String
+                    if (T == []const u8) {
+                        std.log.err("Please provide a string", .{});
+                    } else {
+                        unreachable;
+                    }
+                },
+            }
+        },
+        .invalid => |T| {
+            comptime assert(@typeInfo(T) == .@"enum");
+
+            std.log.err("Option '{s}' received an invalid argument", .{arg});
+            std.log.err("Choose from:", .{});
+
+            for (std.meta.fieldNames(T)) |name| {
+                std.log.err("\t{s}", .{name});
+            }
+        },
+    }
+    std.process.exit(1);
+}
+
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    const config: Config = try .parse(arena.allocator());
+    const opts = try parse(
+        runner.RunOpts{
+            .type = .testing,
+        },
+        arena.allocator(),
+    );
 
-    try runner.runAll(config, test_functions, constructor_functions);
+    try runner.runAll(
+        test_functions,
+        constructor_functions,
+        opts,
+    );
 }
 
 const std = @import("std");
 const runner = @import("runner.zig");
 const profiling = @import("profiling.zig");
 
+const assert = std.debug.assert;
+
 const Allocator = std.mem.Allocator;
-const Config = runner.Config;
 const TestFn = runner.TestFn;
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
+const File = std.fs.File;

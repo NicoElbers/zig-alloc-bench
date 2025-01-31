@@ -1,101 +1,3 @@
-pub const Config = struct {
-    type: Type = .profiling,
-    filter_list: std.ArrayListUnmanaged([]const u8) = .empty,
-
-    pub const Type = enum { profiling, benchmarking };
-
-    const Option = enum {
-        @"--type",
-        @"--filter",
-    };
-
-    pub fn parse(alloc: Allocator) !Config {
-        const stringToEnum = std.meta.stringToEnum;
-
-        var args = try std.process.argsWithAllocator(alloc);
-        defer args.deinit();
-
-        _ = args.next(); // Ignore program name
-
-        var config: Config = .{};
-        while (args.next()) |arg| {
-            const opt = stringToEnum(Option, arg) orelse fatal(arg, .unknown);
-
-            switch (opt) {
-                .@"--type" => {
-                    const val = args.next() orelse fatal(arg, .{ .needs_arg = Type });
-                    config.type = stringToEnum(Type, val) orelse fatal(arg, .{ .invalid = Type });
-                },
-                .@"--filter" => {
-                    const filter = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
-                    try config.filter_list.append(alloc, filter);
-                },
-            }
-        }
-
-        return config;
-    }
-
-    pub fn dump(config: Config, file: File) !void {
-        try file.writer().print(
-            \\Configuration:
-            \\  type: {s}
-            \\
-            \\
-        , .{
-            @tagName(config.type),
-        });
-    }
-
-    fn fatal(arg: []const u8, comptime typ: union(enum) {
-        unknown,
-        needs_arg: type,
-        invalid: type,
-    }) noreturn {
-        switch (typ) {
-            .unknown => {
-                std.log.err("Unknown option '{s}'", .{arg});
-                std.log.err("Choose from:", .{});
-
-                for (std.meta.fieldNames(Option)) |name| {
-                    std.log.err("\t{s}", .{name});
-                }
-            },
-            .needs_arg => |T| {
-                std.log.err("Option '{s}' requires an argument", .{arg});
-                switch (@typeInfo(T)) {
-                    .@"enum" => {
-                        std.log.err("Choose from:", .{});
-
-                        for (std.meta.fieldNames(T)) |name| {
-                            std.log.err("\t{s}", .{name});
-                        }
-                    },
-                    else => {
-                        // String
-                        if (T == []const u8) {
-                            std.log.err("Please provide a string", .{});
-                        } else {
-                            unreachable;
-                        }
-                    },
-                }
-            },
-            .invalid => |T| {
-                comptime assert(@typeInfo(T) == .@"enum");
-
-                std.log.err("Option '{s}' received an invalid argument", .{arg});
-                std.log.err("Choose from:", .{});
-
-                for (std.meta.fieldNames(T)) |name| {
-                    std.log.err("\t{s}", .{name});
-                }
-            },
-        }
-        std.process.exit(1);
-    }
-};
-
 pub const TestFn = *const fn (Allocator) anyerror!void;
 pub const ConstrFn = *const fn (TestOpts) anyerror!profiling.ProfilingAllocator.Res;
 
@@ -137,7 +39,7 @@ pub const ContructorInformation = struct {
 };
 
 pub const TestOpts = struct {
-    type: Config.Type,
+    type: RunOpts.Type,
     test_fn: TestFn,
     timeout_ns: ?u64 = null,
 };
@@ -254,6 +156,7 @@ pub fn run(alloc: Allocator, opts: TestOpts) !ProfilingAllocator.Res {
 
             break :blk undefined;
         },
+        .testing => @panic("TODO: implement testing"),
         .profiling => blk: {
             var profiler = ProfilingAllocator.init(alloc, std.heap.page_allocator);
             errdefer _ = profiler.dumpErrors(std.io.getStdErr());
@@ -336,26 +239,31 @@ pub const StatsRet = struct {
     stats: ?ChildStatistics,
 };
 
+pub const RunOpts = struct {
+    type: Type,
+    filter: []const u8 = "",
+
+    pub const Type = enum(u8) {
+        testing,
+        profiling,
+        benchmarking,
+    };
+};
+
 pub fn runAll(
-    config: Config,
     test_fns: []const TestInformation,
     constructors: []const ContructorInformation,
+    opts: RunOpts,
 ) !void {
-    try config.dump(std.io.getStdOut());
-
     std.log.info("Running {d} permutations", .{test_fns.len * constructors.len});
 
-    for (test_fns) |test_info| {
-        if (config.filter_list.items.len > 0) blk: {
-            for (config.filter_list.items) |filter| {
-                if (std.mem.eql(u8, filter, test_info.name))
-                    break :blk;
-            }
+    tests: for (test_fns) |test_info| {
+        if (opts.type == .benchmarking and test_info.charactaristics.failing) continue;
 
-            continue;
+        if (opts.filter.len > 0) blk: {
+            if (std.mem.eql(u8, opts.filter, test_info.name)) break :blk;
+            continue :tests;
         }
-
-        if (config.type == .benchmarking and test_info.charactaristics.failing) continue;
 
         for (constructors) |constr_info| {
             std.log.debug(
@@ -363,8 +271,8 @@ pub fn runAll(
                 .{ test_info.name, constr_info.name },
             );
 
-            const opts: TestOpts = .{
-                .type = config.type,
+            const test_opts: TestOpts = .{
+                .type = opts.type,
                 .test_fn = test_info.test_fn,
                 .timeout_ns = test_info.timeout_ns,
             };
@@ -380,7 +288,7 @@ pub fn runAll(
 
                     perf.reset();
                     var timer = std.time.Timer.start() catch unreachable;
-                    const profile_stats = constr_info.constr_fn(opts) catch |err| {
+                    const profile_stats = constr_info.constr_fn(test_opts) catch |err| {
                         if (@errorReturnTrace()) |st| {
                             process.dumpStackTrace(st.*, err_pipe.writer());
                         }
@@ -411,7 +319,7 @@ pub fn runAll(
                     std.log.info("child pid: {d}", .{ret.pid});
 
                     var rusage: posix.rusage = undefined;
-                    const term = try process.waitOnFork(ret.pid, &rusage, opts.timeout_ns);
+                    const term = try process.waitOnFork(ret.pid, &rusage, test_opts.timeout_ns);
 
                     const stats: ?ChildStatistics = ret.ipc_read
                         .reader()
