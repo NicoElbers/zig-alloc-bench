@@ -4,25 +4,6 @@
 /// It has a significant amount of overhead in terms of memory usage and time,
 /// but does not touch the allocator under test. Instead it has an additional
 /// allocator used for it's own allocations
-///
-/// TODO: Lotta suggestions down here, but do I really want to do them?
-///       This is supposed to be a profiling allocator first and foremost
-///       Many of these things would be caught by a GPA detecting leaks. Maybe
-///       best to just rely on that
-///
-/// TODO: Actual profiling things:
-///       - Create a metric for fragmentation
-///       - Report stats on allocation time
-///       - Report stats on free time
-///       - Report stats on resize time
-///
-/// TODO: Check that no allocations overlap
-/// TODO: Make errors involve multiple stactraces
-///       For example double frees should have:
-///       - The allocation
-///       - The first free
-///       - The second free
-/// TODO: Also keep track of failed allocations
 pub const ProfilingAllocator = struct {
     allocator_under_test: Allocator,
     arena: ArenaAllocator,

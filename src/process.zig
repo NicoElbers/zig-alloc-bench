@@ -243,7 +243,6 @@ fn statusToTerm(status: u32) Term {
 
 /// Clone of `std.debug.dumpStackTrace`, however with an argument to specify
 /// where to dump it to
-// FIXME: properly pass in the tty config we want to use
 pub fn dumpStackTrace(st: std.builtin.StackTrace, out: anytype) void {
     if (builtin.strip_debug_info) {
         out.print("Unable to dump stack trace: debug info stripped\n", .{}) catch {};

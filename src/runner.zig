@@ -1,4 +1,3 @@
-// TODO: Put config in main
 pub const Config = struct {
     type: Type = .profiling,
     filter_list: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -337,7 +336,6 @@ pub const StatsRet = struct {
     stats: ?ChildStatistics,
 };
 
-// TODO: Make runAll not depend on Config, but on it's own opts
 pub fn runAll(
     config: Config,
     test_fns: []const TestInformation,
@@ -447,8 +445,6 @@ pub fn runAll(
                     }
                 },
                 .Exited => |code| {
-                    // FIXME: This feels very dirty, maybe make statuscode non
-                    // exhaustive and have generic be the _ part
                     const status = process.StatusCode.codeToStatus(code);
                     switch (status) {
                         .success => {

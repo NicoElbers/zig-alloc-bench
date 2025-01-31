@@ -1,6 +1,3 @@
-// FIXME: As a final part to my big refactor, put the tests into their own folder
-// structure, and put the constructors into their own folder
-
 const test_functions: []const TestInformation = &.{
     .{
         .name = "Simple allocation",
