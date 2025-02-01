@@ -169,6 +169,22 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
                         @field(opts, @tagName(tag)) = try std.fmt.parseFloat(FieldType, value);
                     },
 
+                    .@"union" => |_| {
+                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
+
+                        inline for (comptime std.meta.tags(FieldType)) |t| {
+                            if (std.mem.eql(u8, value, @tagName(t))) {
+                                if (std.meta.TagPayload(FieldType, t) != void)
+                                    @panic("Only void payloads supported for now");
+
+                                @field(opts, @tagName(tag)) = @field(FieldType, @tagName(t));
+                                continue :args;
+                            }
+                        }
+
+                        fatal(arg, .{ .unknown = FieldType });
+                    },
+
                     else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
                 }
 
@@ -201,8 +217,16 @@ fn fatal(arg: []const u8, comptime typ: union(enum) {
                 .@"enum" => {
                     std.log.err("Choose from:", .{});
 
-                    for (std.meta.fieldNames(T)) |name| {
-                        std.log.err("\t{s}", .{name});
+                    for (std.meta.tags(T)) |tag| {
+                        std.log.err("\t{s}", .{@tagName(tag)});
+                    }
+                },
+                .@"union" => {
+                    std.log.err("Choose from:", .{});
+
+                    inline for (comptime std.meta.tags(T)) |tag| {
+                        if (@FieldType(T, @tagName(tag)) != void) continue;
+                        std.log.err("\t{s}", .{@tagName(tag)});
                     }
                 },
                 else => {
@@ -238,6 +262,7 @@ pub fn main() !void {
     const opts = try parse(
         runner.RunOpts{
             .type = .testing,
+            .tty = std.io.tty.detectConfig(std.io.getStdOut()),
         },
         arena.allocator(),
     );

@@ -42,6 +42,7 @@ pub const TestOpts = struct {
     type: RunOpts.Type,
     test_fn: TestFn,
     timeout_ns: ?u64 = null,
+    tty: std.io.tty.Config,
 };
 
 pub const Performance = switch (native_os) {
@@ -253,7 +254,7 @@ pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
             var timer = std.time.Timer.start() catch unreachable;
             const profile_stats = constr_fn(opts) catch |err| {
                 if (@errorReturnTrace()) |st| {
-                    process.dumpStackTrace(st.*, err_pipe.writer());
+                    process.dumpStackTrace(st.*, err_pipe.writer(), opts.tty);
                 }
                 StatusCode.exitFatal(err, err_pipe);
             };
@@ -309,6 +310,7 @@ pub const RunOpts = struct {
     type: Type,
     filter: []const u8 = "",
     min_runtime_ns: u64 = std.time.ns_per_s * 5,
+    tty: std.io.tty.Config = .escape_codes,
 
     pub const Type = enum(u8) {
         testing,
@@ -424,6 +426,7 @@ pub fn runAll(
                 .type = opts.type,
                 .test_fn = test_info.test_fn,
                 .timeout_ns = test_info.timeout_ns,
+                .tty = opts.tty,
             };
 
             var running_stats: struct {

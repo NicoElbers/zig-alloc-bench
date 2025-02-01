@@ -243,7 +243,14 @@ fn statusToTerm(status: u32) Term {
 
 /// Clone of `std.debug.dumpStackTrace`, however with an argument to specify
 /// where to dump it to
-pub fn dumpStackTrace(st: std.builtin.StackTrace, out: anytype) void {
+pub fn dumpStackTrace(st: std.builtin.StackTrace, out: anytype, tty: std.io.tty.Config) void {
+    const tty_config: std.io.tty.Config = switch (tty) {
+        .escape_codes => .escape_codes,
+
+        // We cannot use windows colors because they are syscalls
+        else => .no_color,
+    };
+
     if (builtin.strip_debug_info) {
         out.print("Unable to dump stack trace: debug info stripped\n", .{}) catch {};
         return;
@@ -253,7 +260,7 @@ pub fn dumpStackTrace(st: std.builtin.StackTrace, out: anytype) void {
         return;
     };
 
-    std.debug.writeStackTrace(st, out, debug_info, .escape_codes) catch |e| {
+    std.debug.writeStackTrace(st, out, debug_info, tty_config) catch |e| {
         out.print("Unable to dump stack trace: {s}\n", .{@errorName(e)}) catch {};
         return;
     };
