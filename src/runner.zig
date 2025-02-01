@@ -507,12 +507,13 @@ pub fn runAll(
                     \\ 
                     \\ ---- {s} ----
                     \\
-                    \\ Over {d} run(s): 
+                    \\ Over {d} run{s}: 
                     \\  - max rss       : {d: >6.2} {s}
                     \\
                 , .{
                     constr_info.name,
                     running_stats.runs,
+                    if (running_stats.runs > 1) "s" else "",
                     max_rss.@"0",
                     max_rss.@"1",
                 });
