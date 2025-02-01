@@ -153,6 +153,21 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
                             else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
                         }
                     },
+                    .int,
+                    .comptime_int,
+                    => {
+                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
+
+                        @field(opts, @tagName(tag)) = try std.fmt.parseInt(FieldType, value, 10);
+                    },
+
+                    .float,
+                    .comptime_float,
+                    => {
+                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
+
+                        @field(opts, @tagName(tag)) = try std.fmt.parseFloat(FieldType, value);
+                    },
 
                     else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
                 }
