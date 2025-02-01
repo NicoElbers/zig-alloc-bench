@@ -405,6 +405,8 @@ pub fn runAll(
     const stderr = std.io.getStdErr();
     const stdout = std.io.getStdOut();
 
+    var fail_count: u32 = 0;
+
     tests: for (test_fns) |test_info| {
         if (opts.type == .benchmarking and test_info.charactaristics.failing) continue;
 
@@ -501,6 +503,7 @@ pub fn runAll(
             if (failed) {
                 std.log.err("Permutation failed", .{});
                 if (opts.type != .testing) return;
+                fail_count += 1;
             } else {
                 const max_rss = running_stats.total_max_rss.get();
                 try stdout.writer().print(
@@ -549,6 +552,13 @@ pub fn runAll(
                 }
             }
         }
+    }
+
+    if (fail_count > 0) {
+        try stderr.writer().print(
+            "{d} permutations failed\n",
+            .{fail_count},
+        );
     }
 }
 
