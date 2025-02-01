@@ -239,9 +239,76 @@ pub const StatsRet = struct {
     stats: ?ChildStatistics,
 };
 
+pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
+    switch (try process.fork()) {
+        .child => |ret| {
+            const err_pipe = ret.err_pipe;
+            const ipc_write = ret.ipc_write;
+            // const ipc_read = fork.ipc_read;
+
+            var perf = Performance.init() catch |err|
+                StatusCode.exitFatal(err, err_pipe);
+
+            perf.reset();
+            var timer = std.time.Timer.start() catch unreachable;
+            const profile_stats = constr_fn(opts) catch |err| {
+                if (@errorReturnTrace()) |st| {
+                    process.dumpStackTrace(st.*, err_pipe.writer());
+                }
+                StatusCode.exitFatal(err, err_pipe);
+            };
+            const wall_time = timer.read();
+            const perf_ret = try perf.read();
+            perf.deinit();
+
+            // Dump information on the IPC pipe
+            const child_stats: ChildStatistics = .{
+                .perf = perf_ret,
+                .profile = profile_stats,
+                .wall_time_ns = wall_time,
+            };
+
+            ipc_write.writer().writeStructEndian(child_stats, .big) catch |err|
+                StatusCode.exitFatal(err, err_pipe);
+
+            StatusCode.exitSucess();
+        },
+        .parent => |ret| {
+            defer ret.stdin.close();
+            defer ret.ipc_write.close();
+            defer ret.ipc_read.close();
+            errdefer posix.kill(ret.pid, 9) catch {};
+
+            // std.log.info("child pid: {d}", .{ret.pid});
+
+            var rusage: posix.rusage = undefined;
+            const term = try process.waitOnFork(
+                ret.pid,
+                &rusage,
+                opts.timeout_ns,
+            );
+
+            const stats: ?ChildStatistics = ret.ipc_read
+                .reader()
+                .readStructEndian(ChildStatistics, .big) catch null;
+
+            return .{
+                .term = term,
+                .stdout = ret.stdout,
+                .stderr = ret.stderr,
+                .err_pipe = ret.err_pipe,
+                .rusage = rusage,
+                .stats = stats,
+            };
+        },
+    }
+    unreachable;
+}
+
 pub const RunOpts = struct {
     type: Type,
     filter: []const u8 = "",
+    min_runtime_ns: u64 = std.time.ns_per_s * 5,
 
     pub const Type = enum(u8) {
         testing,
@@ -250,12 +317,91 @@ pub const RunOpts = struct {
     };
 };
 
+pub const Unit = enum {
+    time,
+    count,
+    memory,
+    percent,
+
+    pub fn convert(unit: @This(), value: f128) struct { f128, []const u8 } {
+        return switch (unit) {
+            .percent => .{ value, "%" },
+            inline .memory, .count => |t| blk: {
+                const addition = if (t == .memory) "B" else "";
+
+                var limit: f128 = 1;
+                inline for (.{ "", "K", "M", "G", "T", "P" }) |name| {
+                    defer limit *= 1024;
+                    assert(std.math.isNormal(limit));
+
+                    if (value < limit * 1024) {
+                        break :blk .{ value / limit, name ++ addition };
+                    }
+                }
+                break :blk .{ value / limit, "P" ++ addition };
+            },
+            .time => blk: {
+                var limit: f128 = 1;
+                inline for (
+                    .{ 1000, 1000, 1000, 60, 60, 24, 7 },
+                    .{ "ns", "us", "ms", "s", "min", "hours", "days" },
+                ) |threshold, name| {
+                    defer limit *= threshold;
+
+                    if (value < limit * threshold) {
+                        break :blk .{ value / limit, name };
+                    }
+                }
+                break :blk .{ value / limit, "days" };
+            },
+        };
+    }
+};
+fn Tally(comptime T: type, comptime unit: Unit) type {
+    switch (@typeInfo(T)) {
+        .int,
+        .comptime_int,
+        .float,
+        .comptime_float,
+        => {},
+        else => @compileError("Not supported"),
+    }
+
+    return struct {
+        count: u32,
+        total_value: f128,
+
+        pub const init: @This() = .{
+            .count = 0,
+            .total_value = 0,
+        };
+
+        pub fn add(self: *@This(), value: T) void {
+            self.count += 1;
+
+            self.total_value += switch (@typeInfo(T)) {
+                .int, .comptime_int => @floatFromInt(value),
+                else => @floatCast(value),
+            };
+        }
+
+        pub fn get(self: @This()) struct { f128, []const u8 } {
+            if (self.count == 0) return unit.convert(0);
+            const val = self.total_value / @as(f128, @floatFromInt(self.count));
+
+            return unit.convert(val);
+        }
+    };
+}
+
 pub fn runAll(
     test_fns: []const TestInformation,
     constructors: []const ContructorInformation,
     opts: RunOpts,
 ) !void {
     std.log.info("Running {d} permutations", .{test_fns.len * constructors.len});
+    const stderr = std.io.getStdErr();
+    const stdout = std.io.getStdOut();
 
     tests: for (test_fns) |test_info| {
         if (opts.type == .benchmarking and test_info.charactaristics.failing) continue;
@@ -265,117 +411,139 @@ pub fn runAll(
             continue :tests;
         }
 
-        for (constructors) |constr_info| {
-            std.log.debug(
-                "starting ({s}, {s})",
-                .{ test_info.name, constr_info.name },
-            );
+        try stdout.writer().print(
+            \\ 
+            \\ ==== {s} ====
+            \\
+        , .{
+            test_info.name,
+        });
 
+        for (constructors) |constr_info| {
             const test_opts: TestOpts = .{
                 .type = opts.type,
                 .test_fn = test_info.test_fn,
                 .timeout_ns = test_info.timeout_ns,
             };
 
-            const ret: StatsRet = blk: switch (try process.fork()) {
-                .child => |ret| {
-                    const err_pipe = ret.err_pipe;
-                    const ipc_write = ret.ipc_write;
-                    // const ipc_read = fork.ipc_read;
+            var running_stats: struct {
+                runs: u32 = 0,
+                total_time: Tally(u64, .time) = .init,
+                total_cache_miss_percent: Tally(f128, .percent) = .init,
+                allocations: Tally(u64, .count) = .init,
+                total_max_rss: Tally(u64, .memory) = .init,
+            } = .{};
 
-                    var perf = Performance.init() catch |err|
-                        StatusCode.exitFatal(err, err_pipe);
+            const runtime: u64 = if (opts.type == .testing or test_info.charactaristics.failing)
+                0
+            else
+                opts.min_runtime_ns;
 
-                    perf.reset();
-                    var timer = std.time.Timer.start() catch unreachable;
-                    const profile_stats = constr_info.constr_fn(test_opts) catch |err| {
-                        if (@errorReturnTrace()) |st| {
-                            process.dumpStackTrace(st.*, err_pipe.writer());
+            var ran_once = false;
+            var timer = std.time.Timer.start() catch unreachable;
+            const failed = loop: while (timer.read() < runtime or !ran_once) {
+                defer ran_once = true;
+
+                const ret: StatsRet = try runOnce(constr_info.constr_fn, test_opts);
+
+                defer ret.err_pipe.close();
+                defer ret.stderr.close();
+                defer ret.stdout.close();
+
+                switch (ret.term) {
+                    inline else => |v, t| {
+                        if (!test_info.charactaristics.failing) {
+                            try dumpFile("stdout", ret.stdout, stderr);
+                            try dumpFile("stderr", ret.stderr, stderr);
+                            try dumpFile("Error", ret.err_pipe, stderr);
+                            try stderr.writer().print("Terminated because {s}: {any}\n", .{ @tagName(t), v });
+
+                            break :loop true;
                         }
-                        StatusCode.exitFatal(err, err_pipe);
-                    };
-                    const wall_time = timer.read();
-                    const perf_ret = try perf.read();
-                    perf.deinit();
+                    },
+                    .Exited => |code| {
+                        const status = process.StatusCode.codeToStatus(code);
+                        switch (status) {
+                            .success => {
+                                if (test_info.charactaristics.failing) {
+                                    try dumpFile("stdout", ret.stdout, stderr);
+                                    try dumpFile("stderr", ret.stderr, stderr);
+                                    try dumpFile("Error", ret.err_pipe, stderr);
+                                    try stderr.writer().print("Expected failure but was successful", .{});
+                                    break :loop true;
+                                }
+                            },
+                            inline else => |t| {
+                                if (!test_info.charactaristics.failing) {
+                                    try dumpFile("stdout", ret.stdout, stderr);
+                                    try dumpFile("stderr", ret.stderr, stderr);
+                                    try dumpFile("Error", ret.err_pipe, stderr);
+                                    try stderr.writer().print("Exited with code {s}: \n", .{@tagName(t)});
+                                    break :loop true;
+                                }
+                            },
+                        }
+                    },
+                }
 
-                    // Dump information on the IPC pipe
-                    const child_stats: ChildStatistics = .{
-                        .perf = perf_ret,
-                        .profile = profile_stats,
-                        .wall_time_ns = wall_time,
-                    };
+                running_stats.runs += 1;
+                if (ret.stats) |stats| {
+                    running_stats.total_time.add(stats.wall_time_ns);
+                    running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent() orelse 100);
+                    running_stats.allocations.add(stats.profile.allocations);
+                }
+                running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
+            } else false;
 
-                    ipc_write.writer().writeStructEndian(child_stats, .big) catch |err|
-                        StatusCode.exitFatal(err, err_pipe);
+            if (failed) {
+                std.log.err("Permutation failed", .{});
+                if (opts.type != .testing) return;
+            } else {
+                const max_rss = running_stats.total_max_rss.get();
+                try stdout.writer().print(
+                    \\ 
+                    \\ ---- {s} ----
+                    \\
+                    \\ Over {d} run(s): 
+                    \\  - max rss       : {d: >6.2} {s}
+                    \\
+                , .{
+                    constr_info.name,
+                    running_stats.runs,
+                    max_rss.@"0",
+                    max_rss.@"1",
+                });
 
-                    StatusCode.exitSucess();
-                },
-                .parent => |ret| {
-                    defer ret.stdin.close();
-                    defer ret.ipc_write.close();
-                    defer ret.ipc_read.close();
-                    errdefer posix.kill(ret.pid, 9) catch {};
+                if (opts.type == .profiling) {
+                    const alloc = running_stats.allocations.get();
+                    try stdout.writer().print(
+                        \\  - allocations   : {d: >6.0} {s}
+                        \\
+                    , alloc);
+                }
 
-                    std.log.info("child pid: {d}", .{ret.pid});
+                if (opts.type != .profiling) {
+                    const cache_misses = running_stats.total_cache_miss_percent.get();
+                    try stdout.writer().print(
+                        \\  - cache misses  : {d: >6.2} {s}
+                        \\
+                    , .{
+                        cache_misses.@"0",
+                        cache_misses.@"1",
+                    });
+                }
 
-                    var rusage: posix.rusage = undefined;
-                    const term = try process.waitOnFork(ret.pid, &rusage, test_opts.timeout_ns);
-
-                    const stats: ?ChildStatistics = ret.ipc_read
-                        .reader()
-                        .readStructEndian(ChildStatistics, .big) catch null;
-
-                    std.log.info("stats: {any}", .{stats});
-
-                    break :blk .{
-                        .term = term,
-                        .stdout = ret.stdout,
-                        .stderr = ret.stderr,
-                        .err_pipe = ret.err_pipe,
-                        .rusage = rusage,
-                        .stats = stats,
-                    };
-                },
-            };
-
-            defer ret.err_pipe.close();
-            defer ret.stderr.close();
-            defer ret.stdout.close();
-
-            const stderr = std.io.getStdErr();
-            switch (ret.term) {
-                inline else => |v, t| {
-                    if (!test_info.charactaristics.failing) {
-                        try dumpFile("stdout", ret.stdout, stderr);
-                        try dumpFile("stderr", ret.stderr, stderr);
-                        try dumpFile("Error", ret.err_pipe, stderr);
-                        try stderr.writer().print("Terminated because {s}: {any}\n", .{ @tagName(t), v });
-                    }
-                },
-                .Exited => |code| {
-                    const status = process.StatusCode.codeToStatus(code);
-                    switch (status) {
-                        .success => {
-                            if (test_info.charactaristics.failing) {
-                                try dumpFile("stdout", ret.stdout, stderr);
-                                try dumpFile("stderr", ret.stderr, stderr);
-                                try dumpFile("Error", ret.err_pipe, stderr);
-                                try stderr.writer().print("Expected failure but was successful", .{});
-                            }
-                        },
-                        inline else => |t| {
-                            if (!test_info.charactaristics.failing) {
-                                try dumpFile("stdout", ret.stdout, stderr);
-                                try dumpFile("stderr", ret.stderr, stderr);
-                                try dumpFile("Error", ret.err_pipe, stderr);
-                                try stderr.writer().print("Exited with code {s}: \n", .{@tagName(t)});
-                            }
-                        },
-                    }
-                },
+                if (opts.type == .benchmarking) {
+                    const time = running_stats.total_time.get();
+                    try stdout.writer().print(
+                        \\  - time          : {d: >6.2} {s}
+                        \\
+                    , .{
+                        time.@"0",
+                        time.@"1",
+                    });
+                }
             }
-
-            try std.io.getStdOut().writeAll("\n---\n\n");
         }
     }
 }
