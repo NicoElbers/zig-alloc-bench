@@ -126,32 +126,21 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
     _ = args.next();
 
     args: while (args.next()) |arg| {
-        std.log.debug("arg: {s}", .{arg});
-
         if (!std.mem.startsWith(u8, arg, "--")) fatal(arg, .{ .unknown = FieldEnum });
         const field = std.meta.stringToEnum(FieldEnum, arg[2..]) orelse fatal(arg, .{ .unknown = FieldEnum });
 
-        std.log.debug("field tag: {s}", .{@tagName(field)});
         inline for (comptime std.meta.tags(FieldEnum)) |tag| {
-            std.log.debug("tag: {s}", .{@tagName(tag)});
-
             if (field == tag) {
-                std.log.debug("tag success: {s}", .{@tagName(tag)});
-
                 const FieldType = @FieldType(T, @tagName(tag));
                 switch (@typeInfo(FieldType)) {
                     .@"enum" => |_| {
                         const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        std.log.debug("enum: {s}", .{@typeName(FieldType)});
 
                         @field(opts, @tagName(tag)) = std.meta.stringToEnum(FieldType, value) orelse
                             fatal(arg, .{ .unknown = FieldType });
                     },
                     .pointer => |info| {
                         const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        std.log.debug("ptr: {s}", .{@typeName(FieldType)});
 
                         switch (info.size) {
                             .slice => {
