@@ -128,7 +128,8 @@ pub fn destroyPipe(pipe: [2]posix.fd_t) void {
 // Then the child exits.
 fn forkChildErrReport(file: File, err: anyerror) noreturn {
     if (@errorReturnTrace()) |st| {
-        try dumpStackTrace(st.*, file.writer());
+        // TODO: pass properly
+        dumpStackTrace(st.*, file.writer(), .escape_codes);
     }
     file.writer().print("Error: {s}", .{@errorName(err)}) catch {};
 
