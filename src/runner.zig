@@ -311,6 +311,8 @@ pub const RunOpts = struct {
     filter: []const u8 = "",
     min_runtime_ns: u64 = std.time.ns_per_s * 5,
     tty: std.io.tty.Config = .escape_codes,
+    prefix: [:0]const u8 = "runs",
+    dry_run: bool = false,
 
     pub const Type = enum(u8) {
         testing,
@@ -359,6 +361,7 @@ pub const Unit = enum {
         };
     }
 };
+
 fn Tally(comptime T: type, comptime unit: Unit) type {
     switch (@typeInfo(T)) {
         .int,
@@ -396,12 +399,24 @@ fn Tally(comptime T: type, comptime unit: Unit) type {
     };
 }
 
+pub const RunStats = struct {
+    runs: u32 = 0,
+    total_time: Tally(u64, .time) = .init,
+    total_cache_miss_percent: Tally(f128, .percent) = .init,
+    allocations: Tally(u64, .count) = .init,
+    total_max_rss: Tally(u64, .memory) = .init,
+};
+
 pub fn runAll(
+    alloc: Allocator,
     test_fns: []const TestInformation,
     constructors: []const ContructorInformation,
     opts: RunOpts,
 ) !void {
-    std.log.info("Running {d} permutations", .{test_fns.len * constructors.len});
+    var logger: RunLogger = try .init(alloc, opts.prefix, opts.type, opts.dry_run);
+    errdefer logger.deinit(alloc);
+
+    std.log.info("Running up to {d} permutations", .{test_fns.len * constructors.len});
     const stderr = std.io.getStdErr();
     const stdout = std.io.getStdOut();
 
@@ -431,13 +446,7 @@ pub fn runAll(
                 .tty = opts.tty,
             };
 
-            var running_stats: struct {
-                runs: u32 = 0,
-                total_time: Tally(u64, .time) = .init,
-                total_cache_miss_percent: Tally(f128, .percent) = .init,
-                allocations: Tally(u64, .count) = .init,
-                total_max_rss: Tally(u64, .memory) = .init,
-            } = .{};
+            var running_stats: RunStats = .{};
 
             const runtime: u64 = if (opts.type == .testing or test_info.charactaristics.failing)
                 0
@@ -500,6 +509,8 @@ pub fn runAll(
                 running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
             } else false;
 
+            try logger.update(alloc, running_stats);
+
             if (failed) {
                 std.log.err("Permutation failed", .{});
                 if (opts.type != .testing) return;
@@ -522,11 +533,11 @@ pub fn runAll(
                 });
 
                 if (opts.type == .profiling) {
-                    const alloc = running_stats.allocations.get();
+                    const allocations = running_stats.allocations.get();
                     try stdout.writer().print(
                         \\  - allocations   : {d: >6.0} {s}
                         \\
-                    , alloc);
+                    , allocations);
                 }
 
                 if (opts.type != .profiling) {
@@ -560,7 +571,114 @@ pub fn runAll(
             .{fail_count},
         );
     }
+
+    try logger.finish(alloc);
 }
+
+pub const RunLogger = struct {
+    zon: struct {
+        hardware: struct {} = .{},
+        runs: std.ArrayListUnmanaged(RunStats) = .empty,
+
+        pub fn toZon(self: @This()) struct {
+            hardware: struct {},
+            runs: []const RunStats,
+        } {
+            return .{
+                .hardware = .{},
+                .runs = self.runs.items,
+            };
+        }
+    } = .{},
+    output: ?struct {
+        dir: std.fs.Dir,
+        last_increment_path: [:0]const u8,
+    } = null,
+
+    pub fn init(alloc: Allocator, prefix: [:0]const u8, typ: RunOpts.Type, dry: bool) !RunLogger {
+        if (dry) return .{};
+
+        std.fs.cwd().makeDirZ(prefix) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+        var base_dir = try std.fs.cwd().openDirZ(prefix, .{});
+        errdefer base_dir.close();
+
+        const type_dir_name = switch (typ) {
+            .benchmarking => "bench",
+            .profiling => "profile",
+            .testing => "testing",
+        };
+
+        base_dir.makeDirZ(type_dir_name) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+        var type_dir = try base_dir.openDirZ(type_dir_name, .{});
+        errdefer type_dir.close();
+
+        const path = try std.fmt.allocPrintZ(alloc, "increment_{d}", .{std.time.timestamp()});
+        errdefer alloc.free(path);
+
+        const file = try type_dir.createFileZ(path, .{ .exclusive = true });
+        file.close();
+
+        return .{
+            .zon = .{
+                .hardware = .{},
+                .runs = .empty,
+            },
+            .output = .{
+                .dir = type_dir,
+                .last_increment_path = path,
+            },
+        };
+    }
+
+    pub fn deinit(self: *RunLogger, alloc: Allocator) void {
+        self.zon.runs.deinit(alloc);
+
+        if (self.output) |*out| {
+            out.dir.close();
+            alloc.free(out.last_increment_path);
+        }
+
+        self.* = undefined;
+    }
+
+    pub fn update(self: *RunLogger, alloc: Allocator, run_info: RunStats) !void {
+        try self.zon.runs.append(alloc, run_info);
+
+        if (self.output) |*out| {
+            const path = try std.fmt.allocPrintZ(alloc, "increment_{d}", .{std.time.timestamp()});
+            errdefer alloc.free(path);
+
+            const new_increment = try out.dir.createFileZ(path, .{ .exclusive = true });
+            defer new_increment.close();
+
+            try std.zon.stringify.serialize(self.zon.toZon(), .{}, new_increment.writer());
+            try new_increment.sync(); // Ensure our new increment is written to disk
+
+            // At this stage we know our new increment is fully written, we can delete the old one
+            try out.dir.deleteFileZ(out.last_increment_path);
+            alloc.free(out.last_increment_path);
+            out.last_increment_path = path;
+        }
+    }
+
+    pub fn finish(self: *RunLogger, alloc: Allocator) !void {
+        defer self.deinit(alloc);
+
+        if (self.output) |*out| {
+            // TODO: make the timestamp human readable
+            const path = try std.fmt.allocPrintZ(alloc, "run_{d}", .{std.time.timestamp()});
+            defer alloc.free(path);
+
+            try out.dir.renameZ(out.last_increment_path, path);
+        }
+    }
+};
 
 fn dumpFile(file_name: []const u8, read: File, write: File) !void {
     var buf: [1024]u8 = undefined;

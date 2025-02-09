@@ -284,6 +284,7 @@ pub fn main() !void {
     );
 
     try runner.runAll(
+        gpa.allocator(),
         test_functions,
         constructor_functions,
         opts,
