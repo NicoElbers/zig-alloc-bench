@@ -78,7 +78,7 @@ pub fn forkPosix() !ForkRet {
     if (pid_result == 0) {
         // we are the child
 
-        // Close unused pipes
+        // Close unused pipe ends
         posix.close(stdin_pipe[1]);
         posix.close(stdout_pipe[0]);
         posix.close(stderr_pipe[0]);
@@ -96,27 +96,27 @@ pub fn forkPosix() !ForkRet {
             .ipc_write = .{ .handle = ipc_pipe_child_to_parent[1] },
             .ipc_read = .{ .handle = ipc_pipe_parent_to_child[0] },
         } };
+    } else {
+        // we are the parent, pid result is child pid
+
+        // Close unused pipe ends
+        posix.close(stdin_pipe[0]);
+        posix.close(stdout_pipe[1]);
+        posix.close(stderr_pipe[1]);
+        posix.close(err_pipe[1]);
+        posix.close(ipc_pipe_child_to_parent[1]);
+        posix.close(ipc_pipe_parent_to_child[0]);
+
+        return .{ .parent = .{
+            .pid = @intCast(pid_result),
+            .stdin = .{ .handle = stdin_pipe[1] },
+            .stdout = .{ .handle = stdout_pipe[0] },
+            .stderr = .{ .handle = stderr_pipe[0] },
+            .err_pipe = .{ .handle = err_pipe[0] },
+            .ipc_read = .{ .handle = ipc_pipe_child_to_parent[0] },
+            .ipc_write = .{ .handle = ipc_pipe_parent_to_child[1] },
+        } };
     }
-
-    // we are the parent
-
-    // Close unused pipes
-    posix.close(stdin_pipe[0]);
-    posix.close(stdout_pipe[1]);
-    posix.close(stderr_pipe[1]);
-    posix.close(err_pipe[1]);
-    posix.close(ipc_pipe_child_to_parent[1]);
-    posix.close(ipc_pipe_parent_to_child[0]);
-
-    return .{ .parent = .{
-        .pid = @intCast(pid_result),
-        .stdin = .{ .handle = stdin_pipe[1] },
-        .stdout = .{ .handle = stdout_pipe[0] },
-        .stderr = .{ .handle = stderr_pipe[0] },
-        .err_pipe = .{ .handle = err_pipe[0] },
-        .ipc_read = .{ .handle = ipc_pipe_child_to_parent[0] },
-        .ipc_write = .{ .handle = ipc_pipe_parent_to_child[1] },
-    } };
 }
 
 pub fn destroyPipe(pipe: [2]posix.fd_t) void {
@@ -223,7 +223,10 @@ pub fn waitOnFork(pid: posix.fd_t, ru: ?*posix.rusage, timeout_ns: ?u64) !Term {
     return statusToTerm(res.status);
 }
 
-fn killPid(pid: posix.pid_t, ru: ?*posix.rusage) void {
+pub fn killPid(pid: posix.pid_t, ru: ?*posix.rusage) void {
+    // Killing pid 0 is not good
+    assert(pid != 0);
+
     std.posix.kill(pid, 9) catch {};
 
     // Even though we killed the process, we still need to wait on it to make
@@ -332,8 +335,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
-const runner = @import("runner.zig");
-const profiling = @import("profiling.zig");
 
 const PERF = linux.PERF;
 
@@ -342,4 +343,3 @@ const link_libc = builtin.link_libc;
 const assert = std.debug.assert;
 
 const File = std.fs.File;
-const TestOpts = @import("runner.zig").TestOpts;

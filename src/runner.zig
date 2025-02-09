@@ -278,9 +278,7 @@ pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
             defer ret.stdin.close();
             defer ret.ipc_write.close();
             defer ret.ipc_read.close();
-            errdefer posix.kill(ret.pid, 9) catch {};
-
-            // std.log.info("child pid: {d}", .{ret.pid});
+            errdefer process.killPid(ret.pid, null);
 
             var rusage: posix.rusage = undefined;
             const term = try process.waitOnFork(
