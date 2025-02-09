@@ -96,14 +96,14 @@ fn failingTest(alloc: Allocator) !void {
     return error.Fail;
 }
 
-fn simpleGpa(opts: runner.TestOpts) !profiling.ProfilingAllocator.Res {
+fn simpleGpa(opts: runner.TestOpts) !?Statistics.Profiling {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
 
     return runner.run(gpa.allocator(), opts);
 }
 
-fn otherGpa(opts: runner.TestOpts) !profiling.ProfilingAllocator.Res {
+fn otherGpa(opts: runner.TestOpts) !?Statistics.Profiling {
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .retain_metadata = true,
     }).init;
@@ -302,3 +302,4 @@ const TestFn = runner.TestFn;
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const File = std.fs.File;
+const Statistics = @import("Statistics.zig");

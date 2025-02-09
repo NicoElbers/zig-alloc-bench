@@ -1,11 +1,21 @@
-pub const Performance = switch (native_os) {
+timer: Timer,
+perf: Performance,
+
+const Self = @This();
+
+pub const Profiling = struct {
+    allocations: usize,
+    // TODO: Profiling allocator should feed this
+};
+
+const Performance = switch (native_os) {
     .linux => struct {
         fds: [events.len]posix.fd_t = @splat(-1),
 
         const linux = os.linux;
         const PERF = linux.PERF;
 
-        pub const Res = extern struct {
+        pub const Res = struct {
             cache_misses: usize,
             cache_references: usize,
 
@@ -93,7 +103,7 @@ pub const Performance = switch (native_os) {
         }
     },
     else => struct {
-        pub const Res = extern struct {
+        pub const Res = struct {
             pub fn getCacheMissPercent(_: Res) ?f128 {
                 return null;
             }
@@ -106,12 +116,43 @@ pub const Performance = switch (native_os) {
     },
 };
 
+pub fn init() !Self {
+    const perf = try Performance.init();
+    perf.reset();
+    const timer = try Timer.start();
+
+    return .{
+        .perf = perf,
+        .timer = timer,
+    };
+}
+
+pub const Ret = struct {
+    wall_time: u64,
+    perf: Performance.Res,
+    profile: ?Profiling,
+};
+
+pub fn read(self: *Self, profile: ?Profiling) !Ret {
+    const wall_time = self.timer.read();
+    const perf = try self.perf.read();
+
+    return .{
+        .wall_time = wall_time,
+        .perf = perf,
+        .profile = profile,
+    };
+}
+
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const os = std.os;
 const mem = std.mem;
+const time = std.time;
 
 const assert = std.debug.assert;
 
 const native_os = builtin.os.tag;
+
+const Timer = time.Timer;

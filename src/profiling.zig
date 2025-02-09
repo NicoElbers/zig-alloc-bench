@@ -105,7 +105,7 @@ pub const ProfilingAllocator = struct {
         };
     }
 
-    pub fn getStats(self: *Self) !Res {
+    pub fn getStats(self: *Self) !Statistics.Profiling {
         defer {
             self.arena.deinit();
             self.* = undefined;
@@ -314,5 +314,6 @@ const Timer = std.time.Timer;
 const HashMap = std.AutoHashMapUnmanaged;
 const ArrayList = std.ArrayListUnmanaged;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const Statistics = @import("Statistics.zig");
 
 const assert = std.debug.assert;

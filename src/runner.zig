@@ -1,5 +1,5 @@
 pub const TestFn = *const fn (Allocator) anyerror!void;
-pub const ConstrFn = *const fn (TestOpts) anyerror!profiling.ProfilingAllocator.Res;
+pub const ConstrFn = *const fn (TestOpts) anyerror!?Statistics.Profiling;
 
 pub const TestCharacteristics = struct {
     leaks: bool = false,
@@ -45,12 +45,12 @@ pub const TestOpts = struct {
     tty: std.io.tty.Config,
 };
 
-pub fn run(alloc: Allocator, opts: TestOpts) !ProfilingAllocator.Res {
+pub fn run(alloc: Allocator, opts: TestOpts) !?Statistics.Profiling {
     return switch (opts.type) {
         .benchmarking => blk: {
             try opts.test_fn(alloc);
 
-            break :blk undefined;
+            break :blk null;
         },
         .testing => @panic("TODO: implement testing"),
         .profiling => blk: {
@@ -59,10 +59,12 @@ pub fn run(alloc: Allocator, opts: TestOpts) !ProfilingAllocator.Res {
 
             try opts.test_fn(profiler.allocator());
 
+            // FIXME: ew error
             if (profiler.dumpErrors(std.io.getStdErr())) {
                 return error.ProfileError;
             }
 
+            // FIXME: touch profiler
             break :blk try profiler.getStats();
         },
     };
@@ -121,50 +123,36 @@ pub const StatusCode = enum(u8) {
     }
 };
 
-pub const ChildStatistics = extern struct {
-    perf: Performance.Res,
-    profile: profiling.ProfilingAllocator.Res,
-    wall_time_ns: u64,
-};
 pub const StatsRet = struct {
     term: process.Term,
     stdout: File,
     stderr: File,
     err_pipe: File,
     rusage: posix.rusage,
-    stats: ?ChildStatistics,
+    stats: ?Statistics.Ret,
 };
 
-pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
+pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
     switch (try process.fork()) {
         .child => |ret| {
             const err_pipe = ret.err_pipe;
             const ipc_write = ret.ipc_write;
             // const ipc_read = fork.ipc_read;
 
-            var perf = Performance.init() catch |err|
+            var stats = Statistics.init() catch |err|
                 StatusCode.exitFatal(err, err_pipe);
 
-            perf.reset();
-            var timer = std.time.Timer.start() catch unreachable;
             const profile_stats = constr_fn(opts) catch |err| {
                 if (@errorReturnTrace()) |st| {
                     process.dumpStackTrace(st.*, err_pipe.writer(), opts.tty);
                 }
                 StatusCode.exitFatal(err, err_pipe);
             };
-            const wall_time = timer.read();
-            const perf_ret = try perf.read();
-            perf.deinit();
+            const child_ret = stats.read(profile_stats) catch |err|
+                StatusCode.exitFatal(err, err_pipe);
 
             // Dump information on the IPC pipe
-            const child_stats: ChildStatistics = .{
-                .perf = perf_ret,
-                .profile = profile_stats,
-                .wall_time_ns = wall_time,
-            };
-
-            ipc_write.writer().writeStructEndian(child_stats, .big) catch |err|
+            std.zon.stringify.serialize(child_ret, .{}, ipc_write.writer()) catch |err|
                 StatusCode.exitFatal(err, err_pipe);
 
             StatusCode.exitSucess();
@@ -182,9 +170,26 @@ pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
                 opts.timeout_ns,
             );
 
-            const stats: ?ChildStatistics = ret.ipc_read
-                .reader()
-                .readStructEndian(ChildStatistics, .big) catch null;
+            const stats: ?Statistics.Ret = blk: {
+                var buf: [4096]u8 = undefined;
+                const amt = ret.ipc_read.read(&buf) catch break :blk null;
+
+                // -1 because we need to make it sentinel terminated
+                if (amt >= buf.len - 1) break :blk null;
+
+                // HACK: ew
+                buf[amt] = 0;
+                const source: [:0]const u8 = @ptrCast(buf[0..amt]);
+
+                comptime assert(!requiresAllocator(Statistics.Ret));
+                break :blk std.zon.parse.fromSlice(
+                    Statistics.Ret,
+                    alloc,
+                    source,
+                    null,
+                    .{},
+                ) catch null;
+            };
 
             return .{
                 .term = term,
@@ -197,6 +202,27 @@ pub fn runOnce(constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
         },
     }
     unreachable;
+}
+
+// remove with https://github.com/ziglang/zig/pull/22835
+fn requiresAllocator(T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => true,
+        .array => |array| return array.len > 0 and requiresAllocator(array.child),
+        .@"struct" => |@"struct"| inline for (@"struct".fields) |field| {
+            if (requiresAllocator(field.type)) {
+                break true;
+            }
+        } else false,
+        .@"union" => |@"union"| inline for (@"union".fields) |field| {
+            if (requiresAllocator(field.type)) {
+                break true;
+            }
+        } else false,
+        .optional => |optional| requiresAllocator(optional.child),
+        .vector => |vector| return vector.len > 0 and requiresAllocator(vector.child),
+        else => false,
+    };
 }
 
 pub const RunOpts = struct {
@@ -351,7 +377,7 @@ pub fn runAll(
             const failed = loop: while (timer.read() < runtime or !ran_once) {
                 defer ran_once = true;
 
-                const ret: StatsRet = try runOnce(constr_info.constr_fn, test_opts);
+                const ret: StatsRet = try runOnce(alloc, constr_info.constr_fn, test_opts);
 
                 defer ret.err_pipe.close();
                 defer ret.stderr.close();
@@ -395,9 +421,12 @@ pub fn runAll(
 
                 running_stats.runs += 1;
                 if (ret.stats) |stats| {
-                    running_stats.total_time.add(stats.wall_time_ns);
+                    running_stats.total_time.add(stats.wall_time);
                     running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent() orelse 100);
-                    running_stats.allocations.add(stats.profile.allocations);
+
+                    if (stats.profile) |profile| {
+                        running_stats.allocations.add(profile.allocations);
+                    }
                 }
                 running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
             } else false;
@@ -498,7 +527,6 @@ const linux = std.os.linux;
 const profiling = @import("profiling.zig");
 const process = @import("process.zig");
 const builtin = @import("builtin");
-const statistics = @import("statistics.zig");
 
 const assert = std.debug.assert;
 
@@ -509,4 +537,4 @@ const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ProfilingAllocator = profiling.ProfilingAllocator;
 const RunLogger = @import("RunLogger.zig");
-const Performance = statistics.Performance;
+const Statistics = @import("Statistics.zig");
