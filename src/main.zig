@@ -144,7 +144,7 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
 
                         switch (info.size) {
                             .slice => {
-                                if (FieldType == []const u8) {
+                                if (FieldType == []const u8 or FieldType == [:0]const u8) {
                                     @field(opts, @tagName(tag)) = value;
                                 } else if (info.child == []const u8) {
                                     @compileError("No arrays of strings for now");
@@ -158,6 +158,7 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
                     => {
                         const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
 
+                        // TODO: remove the try and get error handling
                         @field(opts, @tagName(tag)) = try std.fmt.parseInt(FieldType, value, 10);
                     },
 
@@ -166,6 +167,7 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
                     => {
                         const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
 
+                        // TODO: remove the try and get error handling
                         @field(opts, @tagName(tag)) = try std.fmt.parseFloat(FieldType, value);
                     },
 
@@ -182,7 +184,11 @@ pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
                             }
                         }
 
-                        fatal(arg, .{ .unknown = FieldType });
+                        fatal(value, .{ .unknown = FieldType });
+                    },
+
+                    .bool => |_| {
+                        @field(opts, @tagName(tag)) = true;
                     },
 
                     else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
@@ -229,12 +235,22 @@ fn fatal(arg: []const u8, comptime typ: union(enum) {
                         std.log.err("\t{s}", .{@tagName(tag)});
                     }
                 },
+                .int,
+                .comptime_int,
+                => {
+                    std.log.err("Choose an integer", .{});
+                },
+                .float,
+                .comptime_float,
+                => {
+                    std.log.err("Choose a float", .{});
+                },
                 else => {
                     // String
-                    if (T == []const u8) {
+                    if (T == []const u8 or T == [:0]const u8) {
                         std.log.err("Please provide a string", .{});
                     } else {
-                        unreachable;
+                        @compileError("Unsupported type " ++ @typeName(T));
                     }
                 },
             }
