@@ -575,111 +575,6 @@ pub fn runAll(
     try logger.finish(alloc);
 }
 
-pub const RunLogger = struct {
-    zon: struct {
-        hardware: struct {} = .{},
-        runs: std.ArrayListUnmanaged(RunStats) = .empty,
-
-        pub fn toZon(self: @This()) struct {
-            hardware: struct {},
-            runs: []const RunStats,
-        } {
-            return .{
-                .hardware = .{},
-                .runs = self.runs.items,
-            };
-        }
-    } = .{},
-    output: ?struct {
-        dir: std.fs.Dir,
-        last_increment_path: [:0]const u8,
-    } = null,
-
-    pub fn init(alloc: Allocator, prefix: [:0]const u8, typ: RunOpts.Type, dry: bool) !RunLogger {
-        if (dry) return .{};
-
-        std.fs.cwd().makeDirZ(prefix) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-        var base_dir = try std.fs.cwd().openDirZ(prefix, .{});
-        errdefer base_dir.close();
-
-        const type_dir_name = switch (typ) {
-            .benchmarking => "bench",
-            .profiling => "profile",
-            .testing => "testing",
-        };
-
-        base_dir.makeDirZ(type_dir_name) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-        var type_dir = try base_dir.openDirZ(type_dir_name, .{});
-        errdefer type_dir.close();
-
-        const path = try std.fmt.allocPrintZ(alloc, "increment_{d}", .{std.time.timestamp()});
-        errdefer alloc.free(path);
-
-        const file = try type_dir.createFileZ(path, .{ .exclusive = true });
-        file.close();
-
-        return .{
-            .zon = .{
-                .hardware = .{},
-                .runs = .empty,
-            },
-            .output = .{
-                .dir = type_dir,
-                .last_increment_path = path,
-            },
-        };
-    }
-
-    pub fn deinit(self: *RunLogger, alloc: Allocator) void {
-        self.zon.runs.deinit(alloc);
-
-        if (self.output) |*out| {
-            out.dir.close();
-            alloc.free(out.last_increment_path);
-        }
-
-        self.* = undefined;
-    }
-
-    pub fn update(self: *RunLogger, alloc: Allocator, run_info: RunStats) !void {
-        try self.zon.runs.append(alloc, run_info);
-
-        if (self.output) |*out| {
-            const path = try std.fmt.allocPrintZ(alloc, "increment_{d}", .{std.time.timestamp()});
-            errdefer alloc.free(path);
-
-            const new_increment = try out.dir.createFileZ(path, .{ .exclusive = true });
-            defer new_increment.close();
-
-            try std.zon.stringify.serialize(self.zon.toZon(), .{}, new_increment.writer());
-            try new_increment.sync(); // Ensure our new increment is written to disk
-
-            // At this stage we know our new increment is fully written, we can delete the old one
-            try out.dir.deleteFileZ(out.last_increment_path);
-            alloc.free(out.last_increment_path);
-            out.last_increment_path = path;
-        }
-    }
-
-    pub fn finish(self: *RunLogger, alloc: Allocator) !void {
-        defer self.deinit(alloc);
-
-        if (self.output) |*out| {
-            // TODO: make the timestamp human readable
-            const path = try std.fmt.allocPrintZ(alloc, "run_{d}", .{std.time.timestamp()});
-            defer alloc.free(path);
-
-            try out.dir.renameZ(out.last_increment_path, path);
-        }
-    }
-};
-
 fn dumpFile(file_name: []const u8, read: File, write: File) !void {
     var buf: [1024]u8 = undefined;
 
@@ -719,3 +614,4 @@ const File = std.fs.File;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ProfilingAllocator = profiling.ProfilingAllocator;
+const RunLogger = @import("RunLogger.zig");
