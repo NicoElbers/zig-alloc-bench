@@ -227,7 +227,7 @@ fn requiresAllocator(T: type) bool {
 
 pub const RunOpts = struct {
     type: Type,
-    filter: []const u8 = "",
+    filter: ?[]const u8 = null,
     min_runtime_ns: u64 = std.time.ns_per_s * 5,
     tty: std.io.tty.Config = .escape_codes,
     prefix: [:0]const u8 = "runs",
@@ -328,26 +328,27 @@ pub const RunStats = struct {
 
 pub fn runAll(
     alloc: Allocator,
-    test_fns: []const TestInformation,
-    constructors: []const ContructorInformation,
     opts: RunOpts,
+    tests: []const TestInformation,
+    constrs: []const ContructorInformation,
 ) !void {
     var logger: RunLogger = try .init(alloc, opts.prefix, opts.type, opts.dry_run);
     errdefer logger.deinit(alloc);
 
-    std.log.info("Running up to {d} permutations", .{test_fns.len * constructors.len});
+    // TODO: Ugly
+    const filter: Filter = .init(if (opts.filter) |f| &.{f} else null, null, .{
+        .type = opts.type,
+        .meta = true,
+    });
+
+    std.log.info("Running up to {d} permutations", .{filter.countSurviving(tests, constrs)});
     const stderr = std.io.getStdErr();
     const stdout = std.io.getStdOut();
 
     var fail_count: u32 = 0;
 
-    tests: for (test_fns) |test_info| {
-        if (opts.type == .benchmarking and test_info.charactaristics.failing) continue;
-
-        if (opts.filter.len > 0) blk: {
-            if (std.mem.eql(u8, opts.filter, test_info.name)) break :blk;
-            continue :tests;
-        }
+    tests: for (tests) |test_info| {
+        if (filter.filterTest(test_info)) continue :tests;
 
         try stdout.writer().print(
             \\ 
@@ -357,7 +358,9 @@ pub fn runAll(
             test_info.name,
         });
 
-        for (constructors) |constr_info| {
+        constrs: for (constrs) |constr_info| {
+            if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+
             const test_opts: TestOpts = .{
                 .type = opts.type,
                 .test_fn = test_info.test_fn,
@@ -520,6 +523,80 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
         try write.writer().print("----- {s} ----\n\n", .{file_name});
     }
 }
+
+const FilterOpts = struct {
+    type: Opts.Type,
+    meta: bool,
+};
+
+const Filter = struct {
+    test_whitelist: ?[]const []const u8,
+    constr_whitelist: ?[]const []const u8,
+    opts: FilterOpts,
+
+    pub fn init(
+        test_whitelist: ?[]const []const u8,
+        constr_whitelist: ?[]const []const u8,
+        opts: FilterOpts,
+    ) Filter {
+        return .{
+            .test_whitelist = test_whitelist,
+            .constr_whitelist = constr_whitelist,
+            .opts = opts,
+        };
+    }
+
+    pub fn countSurviving(
+        self: Filter,
+        tests: []const TestInformation,
+        constrs: []const ContructorInformation,
+    ) u32 {
+        var count: u32 = 0;
+        for (tests) |test_info| {
+            if (self.filterTest(test_info)) continue;
+            for (constrs) |constr_info| {
+                if (!self.filterCombination(test_info, constr_info)) count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    pub fn filterTest(self: Filter, test_info: TestInformation) bool {
+        const test_chars = test_info.charactaristics;
+
+        // Skip all failing tests except when in testing mode
+        if (test_chars.failing and self.opts.type != .testing) return true;
+
+        // Whitelist
+        if (self.test_whitelist) |whitelist| {
+            for (whitelist) |item|
+                if (std.mem.eql(u8, item, test_info.name)) return true;
+        }
+
+        return false;
+    }
+
+    pub fn filterCombination(self: Filter, test_info: TestInformation, constr_info: ContructorInformation) bool {
+        const test_chars = test_info.charactaristics;
+        const constr_chars = constr_info.characteristics;
+
+        // If the test requires multiple threads, but the allocator is single
+        // threaded, skip
+        if (test_chars.multithreaded and !constr_chars.thread_safe) return true;
+
+        // If we're not running meta tests, skip them
+        if (test_chars.meta and !self.opts.meta) return true;
+
+        // Whitelist
+        if (self.constr_whitelist) |whitelist| {
+            for (whitelist) |item|
+                if (std.mem.eql(u8, item, constr_info.name)) return true;
+        }
+
+        return false;
+    }
+};
 
 const std = @import("std");
 const posix = std.posix;
