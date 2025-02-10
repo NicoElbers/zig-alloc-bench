@@ -112,97 +112,6 @@ fn otherGpa(opts: runner.TestOpts) !?Statistics.Profiling {
     return runner.run(gpa.allocator(), opts);
 }
 
-pub fn parse(default: anytype, alloc: Allocator) !@TypeOf(default) {
-    const T = @TypeOf(default);
-    comptime assert(@typeInfo(T) == .@"struct");
-
-    var opts = default;
-
-    const FieldEnum = std.meta.FieldEnum(T);
-
-    var args = try std.process.argsWithAllocator(alloc);
-    defer args.deinit();
-
-    _ = args.next();
-
-    args: while (args.next()) |arg| {
-        if (!std.mem.startsWith(u8, arg, "--")) fatal(arg, .{ .unknown = FieldEnum });
-        const field = std.meta.stringToEnum(FieldEnum, arg[2..]) orelse fatal(arg, .{ .unknown = FieldEnum });
-
-        inline for (comptime std.meta.tags(FieldEnum)) |tag| {
-            if (field == tag) {
-                const FieldType = @FieldType(T, @tagName(tag));
-                switch (@typeInfo(FieldType)) {
-                    .@"enum" => |_| {
-                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        @field(opts, @tagName(tag)) = std.meta.stringToEnum(FieldType, value) orelse
-                            fatal(arg, .{ .unknown = FieldType });
-                    },
-                    .pointer => |info| {
-                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        switch (info.size) {
-                            .slice => {
-                                if (FieldType == []const u8 or FieldType == [:0]const u8) {
-                                    @field(opts, @tagName(tag)) = value;
-                                } else if (info.child == []const u8) {
-                                    @compileError("No arrays of strings for now");
-                                } else @compileError("field type " ++ @typeName(FieldType) ++ " not supported");
-                            },
-                            else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
-                        }
-                    },
-                    .int,
-                    .comptime_int,
-                    => {
-                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        // TODO: remove the try and get error handling
-                        @field(opts, @tagName(tag)) = try std.fmt.parseInt(FieldType, value, 10);
-                    },
-
-                    .float,
-                    .comptime_float,
-                    => {
-                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        // TODO: remove the try and get error handling
-                        @field(opts, @tagName(tag)) = try std.fmt.parseFloat(FieldType, value);
-                    },
-
-                    .@"union" => |_| {
-                        const value = args.next() orelse fatal(arg, .{ .needs_arg = FieldType });
-
-                        inline for (comptime std.meta.tags(FieldType)) |t| {
-                            if (std.mem.eql(u8, value, @tagName(t))) {
-                                if (std.meta.TagPayload(FieldType, t) != void)
-                                    @panic("Only void payloads supported for now");
-
-                                @field(opts, @tagName(tag)) = @field(FieldType, @tagName(t));
-                                continue :args;
-                            }
-                        }
-
-                        fatal(value, .{ .unknown = FieldType });
-                    },
-
-                    .bool => |_| {
-                        @field(opts, @tagName(tag)) = true;
-                    },
-
-                    else => @compileError("field type " ++ @typeName(FieldType) ++ " not supported"),
-                }
-
-                continue :args;
-            }
-        }
-
-        unreachable;
-    }
-
-    return opts;
-}
 fn fatal(arg: []const u8, comptime typ: union(enum) {
     unknown: type,
     needs_arg: type,
@@ -256,17 +165,65 @@ fn fatal(arg: []const u8, comptime typ: union(enum) {
             }
         },
         .invalid => |T| {
-            comptime assert(@typeInfo(T) == .@"enum");
-
             std.log.err("Option '{s}' received an invalid argument", .{arg});
-            std.log.err("Choose from:", .{});
+            switch (@typeInfo(T)) {
+                .@"enum", .@"union" => {
+                    std.log.err("Choose from:", .{});
 
-            for (std.meta.fieldNames(T)) |name| {
-                std.log.err("\t{s}", .{name});
+                    for (std.meta.fieldNames(T)) |name| {
+                        std.log.err("\t{s}", .{name});
+                    }
+                },
+
+                .comptime_int, .int => {
+                    std.log.err("Choose an integer", .{});
+                },
+
+                inline else => |t| @compileError("invalid type " ++ @tagName(t)),
             }
         },
     }
     std.process.exit(1);
+}
+
+// TODO: Ugly, create or find a library for this
+pub fn parseArgs(alloc: Allocator, default: RunOpts) !RunOpts {
+    const eql = std.mem.eql;
+    const Opts = runner.Opts;
+
+    var args = try std.process.argsWithAllocator(alloc);
+    defer args.deinit();
+
+    _ = args.next();
+
+    var opts = default;
+
+    while (args.next()) |arg| {
+        if (eql(u8, arg, "--type") or eql(u8, arg, "-t")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = Opts.Type });
+            opts.type = std.meta.stringToEnum(Opts.Type, val) orelse fatal(arg, .{ .invalid = Opts.Type });
+        } else if (eql(u8, arg, "--filter") or eql(u8, arg, "-f")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
+            opts.filter = val;
+        } else if (eql(u8, arg, "--tty")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = std.io.tty.Config });
+            if (eql(u8, val, "no_color")) {
+                opts.tty = .no_color;
+            } else if (eql(u8, val, "escape_codes")) {
+                opts.tty = .escape_codes;
+            } else fatal(arg, .{ .invalid = std.io.tty.Config });
+        } else if (eql(u8, arg, "--prefix") or eql(u8, arg, "-p")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
+            opts.prefix = val;
+        } else if (eql(u8, arg, "--dry") or eql(u8, arg, "-d")) {
+            opts.dry_run = true;
+        } else if (eql(u8, arg, "--min_time") or eql(u8, arg, "-mt")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
+            opts.min_runtime_ns = std.fmt.parseInt(u64, val, 10) catch fatal(arg, .{ .invalid = u64 });
+        } else fatal(arg, .{ .unknown = enum { type, filter, tty, prefix, dry, min_time } });
+    }
+
+    return opts;
 }
 
 pub fn main() !void {
@@ -275,13 +232,10 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    const opts = try parse(
-        runner.RunOpts{
-            .type = .testing,
-            .tty = std.io.tty.detectConfig(std.io.getStdOut()),
-        },
-        arena.allocator(),
-    );
+    const opts = try parseArgs(arena.allocator(), .{
+        .type = .testing,
+        .tty = std.io.tty.detectConfig(std.io.getStdOut()),
+    });
 
     try runner.runAll(
         gpa.allocator(),
@@ -303,3 +257,4 @@ const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const File = std.fs.File;
 const Statistics = @import("Statistics.zig");
+const RunOpts = runner.Opts;

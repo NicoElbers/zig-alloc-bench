@@ -124,4 +124,4 @@ const Allocator = std.mem.Allocator;
 // - An idea maybe is to have configuration be it's own module, which defines both
 //   these
 const RunStats = runner.RunStats;
-const RunOpts = runner.RunOpts;
+const RunOpts = runner.Opts;

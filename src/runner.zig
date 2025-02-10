@@ -39,7 +39,7 @@ pub const ContructorInformation = struct {
 };
 
 pub const TestOpts = struct {
-    type: RunOpts.Type,
+    type: Opts.Type,
     test_fn: TestFn,
     timeout_ns: ?u64 = null,
     tty: std.io.tty.Config,
@@ -225,7 +225,7 @@ fn requiresAllocator(T: type) bool {
     };
 }
 
-pub const RunOpts = struct {
+pub const Opts = struct {
     type: Type,
     filter: ?[]const u8 = null,
     min_runtime_ns: u64 = std.time.ns_per_s * 5,
@@ -328,9 +328,9 @@ pub const RunStats = struct {
 
 pub fn runAll(
     alloc: Allocator,
-    opts: RunOpts,
     tests: []const TestInformation,
     constrs: []const ContructorInformation,
+    opts: Opts,
 ) !void {
     var logger: RunLogger = try .init(alloc, opts.prefix, opts.type, opts.dry_run);
     errdefer logger.deinit(alloc);
