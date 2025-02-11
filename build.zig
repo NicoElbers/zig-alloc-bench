@@ -1,12 +1,12 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *Build) void {
     const x86_v3 = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
     });
 
-    const optimize: std.builtin.OptimizeMode = switch (b.release_mode) {
+    const optimize: OptimizeMode = switch (b.release_mode) {
         .off => .Debug,
         .any => .ReleaseSafe,
         .fast => .ReleaseFast,
@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
         .target = x86_v3,
         .optimize = optimize,
     });
+    exe_mod.addImport("runner", runner(b, x86_v3, optimize));
 
     const exe = b.addExecutable(.{
         .name = "alloc-bench",
@@ -43,3 +44,15 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 }
+
+pub fn runner(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/runner.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+}
+
+const OptimizeMode = std.builtin.OptimizeMode;
+const Build = std.Build;
+const Module = std.Build.Module;

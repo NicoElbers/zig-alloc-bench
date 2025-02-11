@@ -598,6 +598,10 @@ const Filter = struct {
     }
 };
 
+// FIXME: Workaround to not have to import profiling in main
+// this indicates a refactor
+pub const Profiling = Statistics.Profiling;
+
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
