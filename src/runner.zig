@@ -70,59 +70,6 @@ pub fn run(alloc: Allocator, opts: TestOpts) !?Statistics.Profiling {
     };
 }
 
-/// Known exit statuses within the project
-pub const StatusCode = enum(u8) {
-    success = 0,
-    genericError = 1,
-    outOfMemory = 2,
-
-    pub const Error = error{
-        OutOfMemory,
-        GenericError,
-    };
-
-    pub fn fromStatus(status: StatusCode) Error!void {
-        return switch (status) {
-            .success => {},
-            .genericError => Error.GenericError,
-            .outOfMemory => Error.OutOfMemory,
-        };
-    }
-
-    pub fn toStatus(err: anyerror) StatusCode {
-        return switch (err) {
-            error.OutOfMemory => .outOfMemory,
-            else => .genericError,
-        };
-    }
-
-    pub fn codeToStatus(code: u8) StatusCode {
-        inline for (std.meta.tags(StatusCode)) |status| {
-            if (status.toCode() == code) return status;
-        }
-        return .genericError;
-    }
-
-    pub fn errToCode(err: anyerror) u8 {
-        return StatusCode.toStatus(err).toCode();
-    }
-
-    pub fn toCode(status: StatusCode) u8 {
-        return @intFromEnum(status);
-    }
-
-    pub fn exitFatal(err: anyerror, file: ?File) noreturn {
-        if (file) |f| {
-            f.writer().print("Error: {s}\n", .{@errorName(err)}) catch {};
-        }
-        std.process.exit(StatusCode.errToCode(err));
-    }
-
-    pub fn exitSucess() noreturn {
-        std.process.exit(StatusCode.success.toCode());
-    }
-};
-
 pub const StatsRet = struct {
     term: process.Term,
     stdout: File,
@@ -311,7 +258,7 @@ pub fn runAll(
                         }
                     },
                     .Exited => |code| {
-                        const status = process.StatusCode.codeToStatus(code);
+                        const status = StatusCode.codeToStatus(code);
                         switch (status) {
                             .success => {
                                 if (test_info.charactaristics.failing) {
@@ -446,3 +393,4 @@ const ProfilingAllocator = profiling.ProfilingAllocator;
 const RunLogger = @import("RunLogger.zig");
 const Statistics = @import("Statistics.zig");
 const RunStats = RunLogger.RunStats;
+const StatusCode = process.StatusCode;
