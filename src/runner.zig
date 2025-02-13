@@ -130,6 +130,12 @@ pub const StatsRet = struct {
     err_pipe: File,
     rusage: posix.rusage,
     stats: ?Statistics.Ret,
+
+    pub fn deinit(self: @This()) void {
+        self.err_pipe.close();
+        self.stderr.close();
+        self.stdout.close();
+    }
 };
 
 pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
@@ -156,6 +162,7 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
                 StatusCode.exitFatal(err, err_pipe);
 
             StatusCode.exitSucess();
+            unreachable; // Defensive, child may never escape this scope
         },
         .parent => |ret| {
             defer ret.stdin.close();
@@ -232,6 +239,7 @@ pub const Opts = struct {
     tty: std.io.tty.Config = .escape_codes,
     prefix: [:0]const u8 = "runs",
     dry_run: bool = false,
+    quiet: bool = false,
 
     pub const Type = enum(u8) {
         testing,
@@ -240,99 +248,18 @@ pub const Opts = struct {
     };
 };
 
-pub const Unit = enum {
-    time,
-    count,
-    memory,
-    percent,
-
-    pub fn convert(unit: @This(), value: f128) struct { f128, []const u8 } {
-        return switch (unit) {
-            .percent => .{ value, "%" },
-            inline .memory, .count => |t| blk: {
-                const addition = if (t == .memory) "B" else "";
-
-                var limit: f128 = 1;
-                inline for (.{ "", "K", "M", "G", "T", "P" }) |name| {
-                    defer limit *= 1024;
-                    assert(std.math.isNormal(limit));
-
-                    if (value < limit * 1024) {
-                        break :blk .{ value / limit, name ++ addition };
-                    }
-                }
-                break :blk .{ value / limit, "P" ++ addition };
-            },
-            .time => blk: {
-                var limit: f128 = 1;
-                inline for (
-                    .{ 1000, 1000, 1000, 60, 60, 24, 7 },
-                    .{ "ns", "us", "ms", "s", "min", "hours", "days" },
-                ) |threshold, name| {
-                    defer limit *= threshold;
-
-                    if (value < limit * threshold) {
-                        break :blk .{ value / limit, name };
-                    }
-                }
-                break :blk .{ value / limit, "days" };
-            },
-        };
-    }
-};
-
-fn Tally(comptime T: type, comptime unit: Unit) type {
-    switch (@typeInfo(T)) {
-        .int,
-        .comptime_int,
-        .float,
-        .comptime_float,
-        => {},
-        else => @compileError("Not supported"),
-    }
-
-    return struct {
-        count: u32,
-        total_value: f128,
-
-        pub const init: @This() = .{
-            .count = 0,
-            .total_value = 0,
-        };
-
-        pub fn add(self: *@This(), value: T) void {
-            self.count += 1;
-
-            self.total_value += switch (@typeInfo(T)) {
-                .int, .comptime_int => @floatFromInt(value),
-                else => @floatCast(value),
-            };
-        }
-
-        pub fn get(self: @This()) struct { f128, []const u8 } {
-            if (self.count == 0) return unit.convert(0);
-            const val = self.total_value / @as(f128, @floatFromInt(self.count));
-
-            return unit.convert(val);
-        }
-    };
-}
-
-pub const RunStats = struct {
-    runs: u32 = 0,
-    total_time: Tally(u64, .time) = .init,
-    total_cache_miss_percent: Tally(f128, .percent) = .init,
-    allocations: Tally(u64, .count) = .init,
-    total_max_rss: Tally(u64, .memory) = .init,
-};
-
 pub fn runAll(
     alloc: Allocator,
     tests: []const TestInformation,
     constrs: []const ContructorInformation,
     opts: Opts,
 ) !void {
-    var logger: RunLogger = try .init(alloc, opts.prefix, opts.type, opts.dry_run);
+    var logger: RunLogger = try .init(alloc, opts.type, .{
+        .cli = !opts.quiet,
+        .disk = !opts.dry_run,
+        .prefix = opts.prefix,
+    });
+
     errdefer logger.deinit(alloc);
 
     // TODO: Ugly
@@ -341,25 +268,17 @@ pub fn runAll(
         .meta = true,
     });
 
-    std.log.info("Running up to {d} permutations", .{filter.countSurviving(tests, constrs)});
-    const stderr = std.io.getStdErr();
-    const stdout = std.io.getStdOut();
-
-    var fail_count: u32 = 0;
+    std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
 
     tests: for (tests) |test_info| {
         if (filter.filterTest(test_info)) continue :tests;
 
-        try stdout.writer().print(
-            \\ 
-            \\ ==== {s} ====
-            \\
-        , .{
-            test_info.name,
-        });
+        try logger.startTest(test_info);
 
         constrs: for (constrs) |constr_info| {
             if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+
+            try logger.startConstr(constr_info);
 
             const test_opts: TestOpts = .{
                 .type = opts.type,
@@ -377,24 +296,18 @@ pub fn runAll(
 
             var ran_once = false;
             var timer = std.time.Timer.start() catch unreachable;
-            const failed = loop: while (timer.read() < runtime or !ran_once) {
+            while (timer.read() < runtime or !ran_once) {
                 defer ran_once = true;
 
                 const ret: StatsRet = try runOnce(alloc, constr_info.constr_fn, test_opts);
-
-                defer ret.err_pipe.close();
-                defer ret.stderr.close();
-                defer ret.stdout.close();
+                defer ret.deinit();
 
                 switch (ret.term) {
                     inline else => |v, t| {
                         if (!test_info.charactaristics.failing) {
-                            try dumpFile("stdout", ret.stdout, stderr);
-                            try dumpFile("stderr", ret.stderr, stderr);
-                            try dumpFile("Error", ret.err_pipe, stderr);
-                            try stderr.writer().print("Terminated because {s}: {any}\n", .{ @tagName(t), v });
-
-                            break :loop true;
+                            try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
+                            if (opts.type != .testing) return;
+                            break;
                         }
                     },
                     .Exited => |code| {
@@ -402,27 +315,23 @@ pub fn runAll(
                         switch (status) {
                             .success => {
                                 if (test_info.charactaristics.failing) {
-                                    try dumpFile("stdout", ret.stdout, stderr);
-                                    try dumpFile("stderr", ret.stderr, stderr);
-                                    try dumpFile("Error", ret.err_pipe, stderr);
-                                    try stderr.writer().print("Expected failure but was successful", .{});
-                                    break :loop true;
+                                    try logger.runFail(ret, "Succeeded failing test", code);
+                                    if (opts.type != .testing) return;
+                                    break;
                                 }
                             },
                             inline else => |t| {
                                 if (!test_info.charactaristics.failing) {
-                                    try dumpFile("stdout", ret.stdout, stderr);
-                                    try dumpFile("stderr", ret.stderr, stderr);
-                                    try dumpFile("Error", ret.err_pipe, stderr);
-                                    try stderr.writer().print("Exited with code {s}: \n", .{@tagName(t)});
-                                    break :loop true;
+                                    try logger.runFail(ret, @tagName(t), code);
+                                    if (opts.type != .testing) return;
+                                    break;
                                 }
                             },
                         }
                     },
                 }
 
-                running_stats.runs += 1;
+                running_stats.runs.add(1);
                 if (ret.stats) |stats| {
                     running_stats.total_time.add(stats.wall_time);
                     running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent() orelse 100);
@@ -432,96 +341,13 @@ pub fn runAll(
                     }
                 }
                 running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
-            } else false;
-
-            try logger.update(alloc, running_stats);
-
-            if (failed) {
-                std.log.err("Permutation failed", .{});
-                if (opts.type != .testing) return;
-                fail_count += 1;
-            } else {
-                const max_rss = running_stats.total_max_rss.get();
-                try stdout.writer().print(
-                    \\ 
-                    \\ ---- {s} ----
-                    \\
-                    \\ Over {d} run{s}: 
-                    \\  - max rss       : {d: >6.2} {s}
-                    \\
-                , .{
-                    constr_info.name,
-                    running_stats.runs,
-                    if (running_stats.runs > 1) "s" else "",
-                    max_rss.@"0",
-                    max_rss.@"1",
-                });
-
-                if (opts.type == .profiling) {
-                    const allocations = running_stats.allocations.get();
-                    try stdout.writer().print(
-                        \\  - allocations   : {d: >6.0} {s}
-                        \\
-                    , allocations);
-                }
-
-                if (opts.type != .profiling) {
-                    const cache_misses = running_stats.total_cache_miss_percent.get();
-                    try stdout.writer().print(
-                        \\  - cache misses  : {d: >6.2} {s}
-                        \\
-                    , .{
-                        cache_misses.@"0",
-                        cache_misses.@"1",
-                    });
-                }
-
-                if (opts.type == .benchmarking) {
-                    const time = running_stats.total_time.get();
-                    try stdout.writer().print(
-                        \\  - time          : {d: >6.2} {s}
-                        \\
-                    , .{
-                        time.@"0",
-                        time.@"1",
-                    });
-                }
             }
-        }
-    }
 
-    if (fail_count > 0) {
-        try stderr.writer().print(
-            "{d} permutations failed\n",
-            .{fail_count},
-        );
+            try logger.runSucess(alloc, running_stats);
+        }
     }
 
     try logger.finish(alloc);
-}
-
-fn dumpFile(file_name: []const u8, read: File, write: File) !void {
-    var buf: [1024]u8 = undefined;
-
-    var written_anything = false;
-    while (true) {
-        const amt = read.read(&buf) catch |err| switch (err) {
-            error.WouldBlock => break,
-            else => return err,
-        };
-        if (amt == 0) break;
-        defer written_anything = true;
-
-        if (!written_anything) {
-            try write.writer().print("----- {s} ----\n", .{file_name});
-        }
-
-        try write.writeAll(buf[0..amt]);
-    }
-
-    if (written_anything) {
-        try write.writer().print("----- {s} ----\n\n", .{file_name});
-    }
 }
 
 const FilterOpts = struct {
@@ -619,3 +445,4 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const ProfilingAllocator = profiling.ProfilingAllocator;
 const RunLogger = @import("RunLogger.zig");
 const Statistics = @import("Statistics.zig");
+const RunStats = RunLogger.RunStats;
