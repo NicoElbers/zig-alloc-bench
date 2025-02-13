@@ -207,8 +207,7 @@ pub fn runAll(
         .disk = !opts.dry_run,
         .prefix = opts.prefix,
     });
-
-    errdefer logger.deinit(alloc);
+    defer logger.finish(alloc) catch |err| @panic(@errorName(err));
 
     // TODO: Ugly
     const filter: Filter = .init(if (opts.filter) |f| &.{f} else null, null, .{
@@ -294,8 +293,6 @@ pub fn runAll(
             try logger.runSucess(alloc, running_stats);
         }
     }
-
-    try logger.finish(alloc);
 }
 
 const FilterOpts = struct {

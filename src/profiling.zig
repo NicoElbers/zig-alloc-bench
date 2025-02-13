@@ -295,7 +295,28 @@ pub const ProfilingAllocator = struct {
     fn remap(ctx: *anyopaque, mem: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
-        return self.allocator_under_test.rawRemap(mem, alignment, new_len, ret_addr);
+        self.timer.reset();
+        const ret = self.allocator_under_test.rawRemap(mem, alignment, new_len, ret_addr);
+        const time = self.timer.read();
+
+        if (ret) |r| {
+            if (self.lastAddrReference(@intFromPtr(mem.ptr))) |ref| {
+                const arena = self.arena.allocator();
+
+                ref.free(ret_addr, time, self);
+
+                self.allocation_list.append(self.arena.allocator(), .{
+                    .addr = @intFromPtr(r),
+                    .alloced = .{
+                        .time_ns = time,
+                        .trace = captureStackTrace(arena, ret_addr),
+                    },
+                    .length = new_len,
+                }) catch {};
+            }
+        }
+
+        return ret;
     }
 
     fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
