@@ -1,5 +1,4 @@
 pub const TestFn = *const fn (Allocator) anyerror!void;
-pub const ConstrFn = *const fn (TestOpts) anyerror!?Statistics.Profiling;
 
 pub const TestCharacteristics = struct {
     leaks: bool = false,
@@ -25,6 +24,8 @@ pub const TestInformation = struct {
     timeout_ns: ?u64 = null,
     test_fn: TestFn,
 };
+
+pub const ConstrFn = *const fn (TestOpts) anyerror!?Statistics.Profiling;
 
 pub const AllocatorCharacteristics = struct {
     thread_safe: bool = false,

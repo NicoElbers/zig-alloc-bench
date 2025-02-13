@@ -14,12 +14,16 @@ pub fn build(b: *Build) void {
         .small => .ReleaseSmall,
     };
 
+    const runner_mod = runner(b, x86_v3, optimize);
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = x86_v3,
         .optimize = optimize,
     });
-    exe_mod.addImport("runner", runner(b, x86_v3, optimize));
+    exe_mod.addImport("runner", runner_mod);
+    exe_mod.addImport("tests", tests(b, runner_mod, x86_v3, optimize));
+    exe_mod.addImport("allocators", allocators(b, runner_mod, x86_v3, optimize));
 
     const exe = b.addExecutable(.{
         .name = "alloc-bench",
@@ -51,6 +55,29 @@ pub fn runner(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode) *
         .target = target,
         .optimize = optimize,
     });
+}
+
+pub fn tests(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+    const tests_mod = b.createModule(.{
+        .root_source_file = b.path("tests/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tests_mod.addImport("runner", runner_mod);
+
+    return tests_mod;
+}
+
+pub fn allocators(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+    const allocators_mod = b.createModule(.{
+        .root_source_file = b.path("allocators/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    allocators_mod.addImport("runner", runner_mod);
+
+    return allocators_mod;
 }
 
 const OptimizeMode = std.builtin.OptimizeMode;
