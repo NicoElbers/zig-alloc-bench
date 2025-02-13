@@ -131,7 +131,7 @@ fn forkChildErrReport(file: File, err: anyerror) noreturn {
         // TODO: pass properly
         dumpStackTrace(st.*, file.writer(), .escape_codes);
     }
-    file.writer().print("Error: {s}", .{@errorName(err)}) catch {};
+    file.writer().print("Error: {s}\n", .{@errorName(err)}) catch {};
 
     // If we're linking libc, some naughty applications may have registered atexit handlers
     // which we really do not want to run in the fork child. I caught LLVM doing this and

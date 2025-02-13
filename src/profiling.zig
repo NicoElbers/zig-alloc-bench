@@ -139,7 +139,7 @@ pub const ProfilingAllocator = struct {
                         writer.print("Dumping stacktrace failed: {s}\n", .{@errorName(e)}) catch {};
                     };
                 } else {
-                    writer.print("StackTrace not found", .{}) catch {};
+                    writer.print("StackTrace not found\n", .{}) catch {};
                 }
             }
         }
@@ -156,7 +156,7 @@ pub const ProfilingAllocator = struct {
                             writer.print("Dumping stacktrace failed: {s}\n", .{@errorName(e)}) catch {};
                         };
                     } else {
-                        writer.print("StackTrace not found", .{}) catch {};
+                        writer.print("StackTrace not found\n", .{}) catch {};
                     }
                 }
             }
