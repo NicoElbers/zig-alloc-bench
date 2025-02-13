@@ -19,7 +19,7 @@ const Performance = switch (native_os) {
             cache_misses: usize,
             cache_references: usize,
 
-            pub fn getCacheMissPercent(self: Res) ?f128 {
+            pub fn getCacheMissPercent(self: Res) f128 {
                 const cm: f128 = @floatFromInt(self.cache_misses);
                 const cr: f128 = @floatFromInt(self.cache_references);
                 return (cm / cr) * 100;
@@ -104,15 +104,23 @@ const Performance = switch (native_os) {
     },
     else => struct {
         pub const Res = struct {
-            pub fn getCacheMissPercent(_: Res) ?f128 {
-                return null;
+            pub fn getCacheMissPercent(_: Res) f128 {
+                unreachable;
             }
         };
 
-        pub fn init() !@This() {}
-        pub fn reset(_: @This()) void {}
-        pub fn read(_: @This()) Res {}
-        pub fn deinit(_: *@This()) void {}
+        pub fn init() !@This() {
+            unreachable;
+        }
+        pub fn reset(_: @This()) void {
+            unreachable;
+        }
+        pub fn read(_: @This()) Res {
+            unreachable;
+        }
+        pub fn deinit(_: *@This()) void {
+            unreachable;
+        }
     },
 };
 
@@ -142,6 +150,11 @@ pub fn read(self: *Self, profile: ?Profiling) !Ret {
         .perf = perf,
         .profile = profile,
     };
+}
+
+pub fn deinit(self: *Self) void {
+    self.perf.deinit();
+    self.* = undefined;
 }
 
 const std = @import("std");

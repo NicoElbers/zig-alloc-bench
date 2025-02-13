@@ -156,19 +156,18 @@ pub fn init(alloc: Allocator, typ: RunOpts.Type, opts: Opts) !Self {
     if (!opts.disk) return .{
         .opts = opts,
     };
+    const type_dir_name = switch (typ) {
+        .benchmarking => "bench",
+        .profiling => "profile",
+        .testing => "testing",
+    };
 
     std.fs.cwd().makeDirZ(opts.prefix) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
     var base_dir = try std.fs.cwd().openDirZ(opts.prefix, .{});
-    errdefer base_dir.close();
-
-    const type_dir_name = switch (typ) {
-        .benchmarking => "bench",
-        .profiling => "profile",
-        .testing => "testing",
-    };
+    defer base_dir.close();
 
     base_dir.makeDirZ(type_dir_name) catch |err| switch (err) {
         error.PathAlreadyExists => {},

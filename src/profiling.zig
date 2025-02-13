@@ -100,6 +100,7 @@ pub const ProfilingAllocator = struct {
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
+                .remap = remap,
                 .free = free,
             },
         };
@@ -243,11 +244,11 @@ pub const ProfilingAllocator = struct {
         }) catch {};
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
         self.timer.reset();
-        const maybe_ptr = self.allocator_under_test.rawAlloc(len, ptr_align, ret_addr);
+        const maybe_ptr = self.allocator_under_test.rawAlloc(len, alignment, ret_addr);
         const time = self.timer.read();
 
         if (maybe_ptr) |ptr| {
@@ -271,11 +272,11 @@ pub const ProfilingAllocator = struct {
         return maybe_ptr;
     }
 
-    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
         self.timer.reset();
-        const did_resize = self.allocator_under_test.rawResize(buf, buf_align, new_len, ret_addr);
+        const did_resize = self.allocator_under_test.rawResize(buf, alignment, new_len, ret_addr);
         const time = self.timer.read();
 
         if (did_resize) {
@@ -291,11 +292,17 @@ pub const ProfilingAllocator = struct {
         return did_resize;
     }
 
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+    fn remap(ctx: *anyopaque, mem: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
+
+        return self.allocator_under_test.rawRemap(mem, alignment, new_len, ret_addr);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
         self.timer.reset();
-        self.allocator_under_test.rawFree(buf, buf_align, ret_addr);
+        self.allocator_under_test.rawFree(buf, alignment, ret_addr);
         const time = self.timer.read();
 
         if (self.lastAddrReference(@intFromPtr(buf.ptr))) |ref| {
@@ -315,5 +322,6 @@ const HashMap = std.AutoHashMapUnmanaged;
 const ArrayList = std.ArrayListUnmanaged;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const Statistics = @import("Statistics.zig");
+const Alignment = std.mem.Alignment;
 
 const assert = std.debug.assert;

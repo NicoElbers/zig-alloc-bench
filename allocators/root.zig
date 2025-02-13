@@ -4,8 +4,8 @@ pub const default: []const ContructorInformation = &.{
         .constr_fn = &simpleGpa,
     },
     .{
-        .name = "Other GPA",
-        .constr_fn = &otherGpa,
+        .name = "SMP allocator",
+        .constr_fn = &smpAlloc,
     },
 };
 
@@ -16,13 +16,10 @@ fn simpleGpa(opts: runner.TestOpts) !?Profiling {
     return runner.run(gpa.allocator(), opts);
 }
 
-fn otherGpa(opts: runner.TestOpts) !?Profiling {
-    var gpa = std.heap.GeneralPurposeAllocator(.{
-        .retain_metadata = true,
-    }).init;
-    defer _ = gpa.deinit();
+fn smpAlloc(opts: runner.TestOpts) !?Profiling {
+    const smp = std.heap.smp_allocator;
 
-    return runner.run(gpa.allocator(), opts);
+    return runner.run(smp, opts);
 }
 
 const std = @import("std");

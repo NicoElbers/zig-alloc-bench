@@ -104,6 +104,7 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
             };
             const child_ret = stats.read(profile_stats) catch |err|
                 StatusCode.exitFatal(err, err_pipe);
+            stats.deinit();
 
             // Dump information on the IPC pipe
             std.zon.stringify.serialize(child_ret, .{}, ipc_write.writer()) catch |err|
@@ -114,7 +115,6 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
         },
         .parent => |ret| {
             defer ret.stdin.close();
-            defer ret.ipc_write.close();
             defer ret.ipc_read.close();
             errdefer process.killPid(ret.pid, null);
 
@@ -282,7 +282,7 @@ pub fn runAll(
                 running_stats.runs.add(1);
                 if (ret.stats) |stats| {
                     running_stats.total_time.add(stats.wall_time);
-                    running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent() orelse 100);
+                    running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent());
 
                     if (stats.profile) |profile| {
                         running_stats.allocations.add(profile.allocations);

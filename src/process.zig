@@ -4,14 +4,12 @@ pub const ForkRetParent = struct {
     stdout: File,
     stderr: File,
     err_pipe: File,
-    ipc_write: File,
     ipc_read: File,
 };
 
 pub const ForkRetChild = struct {
     err_pipe: File,
     ipc_write: File,
-    ipc_read: File,
 };
 
 pub const ForkRet = union(enum) {
@@ -67,9 +65,6 @@ pub fn forkPosix() !ForkRet {
     const err_pipe: [2]posix.fd_t = try posix.pipe2(ipc_pipe_flags);
     errdefer destroyPipe(err_pipe);
 
-    const ipc_pipe_parent_to_child: [2]posix.fd_t = try posix.pipe2(ipc_pipe_flags);
-    errdefer destroyPipe(ipc_pipe_parent_to_child);
-
     const ipc_pipe_child_to_parent: [2]posix.fd_t = try posix.pipe2(ipc_pipe_flags);
     errdefer destroyPipe(ipc_pipe_child_to_parent);
 
@@ -84,17 +79,20 @@ pub fn forkPosix() !ForkRet {
         posix.close(stderr_pipe[0]);
         posix.close(err_pipe[0]);
         posix.close(ipc_pipe_child_to_parent[0]);
-        posix.close(ipc_pipe_parent_to_child[1]);
 
         // Setup standard files
         posix.dup2(stdin_pipe[0], posix.STDIN_FILENO) catch |err| forkChildErrReport(.{ .handle = err_pipe[1] }, err);
+        posix.close(stdin_pipe[0]);
+
         posix.dup2(stdout_pipe[1], posix.STDOUT_FILENO) catch |err| forkChildErrReport(.{ .handle = err_pipe[1] }, err);
+        posix.close(stdout_pipe[1]);
+
         posix.dup2(stderr_pipe[1], posix.STDERR_FILENO) catch |err| forkChildErrReport(.{ .handle = err_pipe[1] }, err);
+        posix.close(stderr_pipe[1]);
 
         return .{ .child = .{
             .err_pipe = .{ .handle = err_pipe[1] },
             .ipc_write = .{ .handle = ipc_pipe_child_to_parent[1] },
-            .ipc_read = .{ .handle = ipc_pipe_parent_to_child[0] },
         } };
     } else {
         // we are the parent, pid result is child pid
@@ -105,7 +103,6 @@ pub fn forkPosix() !ForkRet {
         posix.close(stderr_pipe[1]);
         posix.close(err_pipe[1]);
         posix.close(ipc_pipe_child_to_parent[1]);
-        posix.close(ipc_pipe_parent_to_child[0]);
 
         return .{ .parent = .{
             .pid = @intCast(pid_result),
@@ -114,7 +111,6 @@ pub fn forkPosix() !ForkRet {
             .stderr = .{ .handle = stderr_pipe[0] },
             .err_pipe = .{ .handle = err_pipe[0] },
             .ipc_read = .{ .handle = ipc_pipe_child_to_parent[0] },
-            .ipc_write = .{ .handle = ipc_pipe_parent_to_child[1] },
         } };
     }
 }
@@ -168,6 +164,7 @@ pub fn waitOnFork(pid: posix.fd_t, ru: ?*posix.rusage, timeout_ns: ?u64) !Term {
                 .SRCH => return error.ProcessNotFound,
                 else => |e| return posix.unexpectedErrno(e),
             };
+            defer posix.close(@intCast(rc));
 
             var pollfd: [1]posix.pollfd = .{.{
                 .fd = pidfd,
