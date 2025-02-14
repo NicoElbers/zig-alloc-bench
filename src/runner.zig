@@ -28,14 +28,14 @@ pub const TestInformation = struct {
 pub const ConstrFn = *const fn (TestOpts) anyerror!?Statistics.Profiling;
 
 pub const AllocatorCharacteristics = struct {
-    thread_safe: bool = false,
+    thread_safe: bool = true,
 
     pub const default = .{};
 };
 pub const ContructorInformation = struct {
     name: []const u8,
     description: ?[]const u8 = null,
-    characteristics: AllocatorCharacteristics = .default,
+    characteristics: AllocatorCharacteristics,
     constr_fn: ConstrFn,
 };
 
@@ -392,3 +392,4 @@ const RunLogger = @import("RunLogger.zig");
 const Statistics = @import("Statistics.zig");
 const RunStats = RunLogger.RunStats;
 const StatusCode = process.StatusCode;
+const Random = std.Random;

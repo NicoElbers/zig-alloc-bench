@@ -226,11 +226,13 @@ pub fn startConstr(self: Self, constr_info: ContructorInformation) !void {
 
 fn printPadded(pad: u8, width: u16, file: File, str: []const u8) !void {
     // Always have 2 padding, looks nicer
-    const pad_count = (width -| 4) -| str.len + 4;
+    const pad_count = (width -| 6) -| str.len + 4;
     const pad_side = @divFloor(pad_count, 2);
 
     for (0..pad_side) |_| try file.writeAll(&.{pad});
+    try file.writeAll(" ");
     try file.writeAll(str);
+    try file.writeAll(" ");
     for (0..pad_side) |_| try file.writeAll(&.{pad});
     try file.writeAll("\n");
 }

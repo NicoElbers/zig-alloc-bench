@@ -1,16 +1,18 @@
 pub const default: []const ContructorInformation = &.{
     .{
-        .name = "Default GPA",
+        .name = "Debug allocator",
+        .characteristics = .default,
         .constr_fn = &simpleGpa,
     },
     .{
         .name = "SMP allocator",
+        .characteristics = .default,
         .constr_fn = &smpAlloc,
     },
 };
 
 fn simpleGpa(opts: runner.TestOpts) !?Profiling {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
     return runner.run(gpa.allocator(), opts);

@@ -12,7 +12,16 @@ pub const default: []const TestInformation = &.{
         .timeout_ns = std.time.ns_per_s,
         .test_fn = &manyAllocResizeFree,
     },
-
+    .{
+        .name = "Appending to arraylist",
+        .timeout_ns = std.time.ns_per_s,
+        .test_fn = &appendingToArrayList,
+    },
+    .{
+        .name = "Appending to many arraylists",
+        .timeout_ns = std.time.ns_per_s,
+        .test_fn = &appendingToMultipleArrayLists,
+    },
     .{
         .name = "No free",
         .charactaristics = .{
@@ -58,6 +67,31 @@ fn manyAllocResizeFree(alloc: Allocator) !void {
         const arr = try alloc.alloc(u32, 100);
         // _ = alloc.resize(arr, 50);
         alloc.free(arr);
+    }
+}
+
+fn appendingToArrayList(alloc: Allocator) !void {
+    var arr = std.ArrayListUnmanaged(u64).empty;
+    defer arr.deinit(alloc);
+
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    for (0..10_000) |_| {
+        try arr.append(alloc, rand.int(u64));
+    }
+}
+
+fn appendingToMultipleArrayLists(alloc: Allocator) !void {
+    var arrs: [10]std.ArrayListUnmanaged(u64) = @splat(.empty);
+    defer for (&arrs) |*arr| arr.deinit(alloc);
+
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    for (0..10_000) |_| {
+        const idx = rand.intRangeAtMost(u64, 0, arrs.len - 1);
+        try arrs[idx].append(alloc, rand.int(u64));
     }
 }
 
