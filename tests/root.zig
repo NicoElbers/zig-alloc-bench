@@ -26,6 +26,7 @@ pub const default: []const TestInformation = &.{
         .name = "No free",
         .charactaristics = .{
             .failing = true,
+            .testing = true,
         },
         .test_fn = &noFree,
     },
@@ -33,6 +34,7 @@ pub const default: []const TestInformation = &.{
         .name = "Double free",
         .charactaristics = .{
             .failing = true,
+            .testing = true,
         },
         .test_fn = &doubleFree,
     },
@@ -45,6 +47,7 @@ pub const default: []const TestInformation = &.{
         .charactaristics = .{
             .meta = true,
             .failing = true,
+            .testing = true,
         },
         .test_fn = &failingTest,
     },

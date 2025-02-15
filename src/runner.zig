@@ -14,6 +14,8 @@ pub const TestCharacteristics = struct {
     /// A failing test is supposed to emit some error
     failing: bool = false,
 
+    testing: bool = false,
+
     pub const default: TestCharacteristics = .{};
 };
 
@@ -201,7 +203,8 @@ pub fn runAll(
     constrs: []const ContructorInformation,
     opts: Opts,
 ) !void {
-    var logger: RunLogger = try .init(alloc, opts.type, .{
+    var logger: RunLogger = try .init(alloc, .{
+        .type = opts.type,
         .cli = !opts.quiet,
         .disk = !opts.dry_run,
         .prefix = opts.prefix,
@@ -342,7 +345,7 @@ const Filter = struct {
         const test_chars = test_info.charactaristics;
 
         // Skip all failing tests except when in testing mode
-        if (test_chars.failing and self.opts.type != .testing) return true;
+        if (test_chars.testing and self.opts.type != .testing) return true;
 
         // Whitelist
         if (self.test_whitelist) |whitelist| {

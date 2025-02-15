@@ -150,16 +150,18 @@ pub const Opts = struct {
     cli: bool = true,
     disk: bool = true,
     prefix: [:0]const u8 = "runs",
+    type: RunOpts.Type,
 };
 
-pub fn init(alloc: Allocator, typ: RunOpts.Type, opts: Opts) !Self {
-    if (!opts.disk) return .{
+pub fn init(alloc: Allocator, opts: Opts) !Self {
+    if (!opts.disk or opts.type == .testing) return .{
         .opts = opts,
     };
-    const type_dir_name = switch (typ) {
+
+    const type_dir_name = switch (opts.type) {
         .benchmarking => "bench",
         .profiling => "profile",
-        .testing => "testing",
+        .testing => unreachable,
     };
 
     std.fs.cwd().makeDirZ(opts.prefix) catch |err| switch (err) {
@@ -274,14 +276,18 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
 }
 
 pub fn runSucess(self: *Self, alloc: Allocator, run_info: RunStats) !void {
+    const stdout = std.io.getStdOut();
+    const padding = 20;
+
+    if (self.opts.type == .testing) {
+        try stdout.writeAll("Run Sucess\n");
+        return;
+    }
+
     // update file _first_ to reduce the risk of losing a run
     if (self.opts.disk) try updateFile(self, alloc, run_info);
 
     if (!self.opts.cli) return;
-
-    const stdout = std.io.getStdOut();
-
-    const padding = 20;
 
     try run_info.runs.dump("- Runs", padding, stdout);
     try run_info.total_time.dump("- Time", padding, stdout);
