@@ -48,12 +48,11 @@ pub const TestOpts = struct {
 
 pub fn run(alloc: Allocator, opts: TestOpts) !?Statistics.Profiling {
     return switch (opts.type) {
-        .benchmarking => blk: {
+        .testing, .benchmarking => blk: {
             try opts.test_fn(alloc);
 
             break :blk null;
         },
-        .testing => @panic("TODO: implement testing"),
         .profiling => blk: {
             var profiler = ProfilingAllocator.init(alloc, std.heap.page_allocator);
             errdefer _ = profiler.dumpErrors(std.io.getStdErr());
@@ -242,6 +241,7 @@ pub fn runAll(
                 opts.min_runtime_ns;
 
             var ran_once = false;
+            var any_failed = false;
             var timer = std.time.Timer.start() catch unreachable;
             while (timer.read() < runtime or !ran_once) {
                 defer ran_once = true;
@@ -254,6 +254,7 @@ pub fn runAll(
                         if (!test_info.charactaristics.failing) {
                             try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
                             if (opts.type != .testing) return;
+                            any_failed = true;
                             break;
                         }
                     },
@@ -264,6 +265,7 @@ pub fn runAll(
                                 if (test_info.charactaristics.failing) {
                                     try logger.runFail(ret, "Succeeded failing test", code);
                                     if (opts.type != .testing) return;
+                                    any_failed = true;
                                     break;
                                 }
                             },
@@ -271,6 +273,7 @@ pub fn runAll(
                                 if (!test_info.charactaristics.failing) {
                                     try logger.runFail(ret, @tagName(t), code);
                                     if (opts.type != .testing) return;
+                                    any_failed = true;
                                     break;
                                 }
                             },
@@ -290,7 +293,9 @@ pub fn runAll(
                 running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
             }
 
-            try logger.runSucess(alloc, running_stats);
+            if (!any_failed) {
+                try logger.runSucess(alloc, running_stats);
+            }
         }
     }
 }
