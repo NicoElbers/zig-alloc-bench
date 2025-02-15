@@ -1,4 +1,4 @@
-pub const default: []const TestInformation = &.{
+pub const default = [_]TestInformation{
     .{
         .name = "Simple allocation",
         .test_fn = &simpleTest,
@@ -50,6 +50,18 @@ pub const default: []const TestInformation = &.{
             .testing = true,
         },
         .test_fn = &failingTest,
+    },
+    .{
+        .name = "Basic alignment",
+        .charactaristics = .{
+            .testing = true,
+        },
+        .test_fn = &alignment,
+    },
+    .{
+        .name = "Aligned allocs",
+        .charactaristics = .default,
+        .test_fn = &alignedAllocs,
     },
 };
 
@@ -120,6 +132,75 @@ fn doubleFree(alloc: Allocator) !void {
 fn failingTest(alloc: Allocator) !void {
     _ = alloc;
     return error.Fail;
+}
+
+const repetitions = 100;
+
+const Types = [_]type{
+    u8,            u32,                     u16,                     u128,
+    u256,          u512,                    u1024,                   u2048,
+    struct { u8 }, extern struct { a: u8 }, packed struct { a: u8 }, struct {},
+    usize,         *u8,
+};
+
+fn alignment(alloc: Allocator) !void {
+    inline for (Types) |T| {
+        var ptrs: [repetitions]*T = undefined;
+
+        for (0..repetitions) |i| {
+            const elem = try alloc.create(T);
+            ptrs[i] = elem;
+
+            try std.testing.expect(@intFromPtr(elem) % @alignOf(T) == 0);
+        }
+
+        for (ptrs) |ptr| alloc.destroy(ptr);
+    }
+
+    inline for (Types) |T| {
+        var ptrs: [repetitions][]T = undefined;
+
+        for (0..repetitions) |i| {
+            const arr = try alloc.alloc(T, 123);
+            ptrs[i] = arr;
+
+            try std.testing.expect(@intFromPtr(arr.ptr) % @alignOf(T) == 0);
+        }
+
+        for (ptrs) |ptr| alloc.free(ptr);
+    }
+}
+
+const Alignments = [_]std.mem.Alignment{
+    .@"1",
+    .@"2",
+    .@"4",
+    .@"8",
+    .@"16",
+    .@"32",
+    .@"64",
+
+    @enumFromInt(std.math.log2_int(u29, 1 << 28)),
+    @enumFromInt(std.math.log2_int(u29, 1 << 29 - 1)),
+};
+
+fn alignedAllocs(alloc: Allocator) !void {
+    inline for (Types) |T| {
+        inline for (Alignments) |alignm| {
+            var ptrs: [repetitions][]align(alignm.toByteUnits()) T = undefined;
+
+            for (0..repetitions) |i| {
+                const arr = try alloc.alignedAlloc(T, @intCast(alignm.toByteUnits()), 123);
+                ptrs[i] = arr;
+
+                @memset(arr, undefined);
+
+                try std.testing.expect(@intFromPtr(arr.ptr) % alignm.toByteUnits() == 0);
+            }
+
+            for (ptrs) |ptr| alloc.free(ptr);
+        }
+    }
 }
 
 const std = @import("std");
