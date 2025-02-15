@@ -1,14 +1,9 @@
 timer: Timer,
-perf: Performance,
+perf: PerformanceImpl,
 
 const Self = @This();
 
-pub const Profiling = struct {
-    allocations: usize,
-    // TODO: Profiling allocator should feed this
-};
-
-const Performance = switch (native_os) {
+const PerformanceImpl = switch (native_os) {
     .linux => struct {
         fds: [events.len]posix.fd_t = @splat(-1),
 
@@ -19,9 +14,9 @@ const Performance = switch (native_os) {
             cache_misses: usize,
             cache_references: usize,
 
-            pub fn getCacheMissPercent(self: Res) f128 {
-                const cm: f128 = @floatFromInt(self.cache_misses);
-                const cr: f128 = @floatFromInt(self.cache_references);
+            pub fn getCacheMissPercent(self: Res) f64 {
+                const cm: f64 = @floatFromInt(self.cache_misses);
+                const cr: f64 = @floatFromInt(self.cache_references);
                 return (cm / cr) * 100;
             }
         };
@@ -41,7 +36,7 @@ const Performance = switch (native_os) {
         }
 
         pub fn init() !@This() {
-            var self: Performance = .{};
+            var self: PerformanceImpl = .{};
 
             for (events, 0..) |event, i| {
                 var attr: linux.perf_event_attr = .{
@@ -125,7 +120,7 @@ const Performance = switch (native_os) {
 };
 
 pub fn init() !Self {
-    const perf = try Performance.init();
+    const perf = try PerformanceImpl.init();
     perf.reset();
     const timer = try Timer.start();
 
@@ -137,18 +132,16 @@ pub fn init() !Self {
 
 pub const Ret = struct {
     wall_time: u64,
-    perf: Performance.Res,
-    profile: ?Profiling,
+    perf: PerformanceImpl.Res,
 };
 
-pub fn read(self: *Self, profile: ?Profiling) !Ret {
+pub fn read(self: *Self) !Ret {
     const wall_time = self.timer.read();
     const perf = try self.perf.read();
 
     return .{
         .wall_time = wall_time,
         .perf = perf,
-        .profile = profile,
     };
 }
 
@@ -159,6 +152,7 @@ pub fn deinit(self: *Self) void {
 
 const std = @import("std");
 const builtin = @import("builtin");
+const runner = @import("runner.zig");
 const posix = std.posix;
 const os = std.os;
 const mem = std.mem;
@@ -169,3 +163,4 @@ const assert = std.debug.assert;
 const native_os = builtin.os.tag;
 
 const Timer = time.Timer;
+const Profiling = runner.Profiling;

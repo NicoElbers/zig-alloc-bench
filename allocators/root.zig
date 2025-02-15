@@ -16,7 +16,7 @@ pub const default = [_]ContructorInformation{
     },
 };
 
-fn debugAlloc(opts: TestOpts) !?Profiling {
+fn debugAlloc(opts: TestOpts) !void {
     const DebugAllocator = @import("std").heap.DebugAllocator;
 
     var dbg = DebugAllocator(.{
@@ -34,13 +34,13 @@ fn debugAlloc(opts: TestOpts) !?Profiling {
     return ret;
 }
 
-fn smpAlloc(opts: TestOpts) !?Profiling {
+fn smpAlloc(opts: TestOpts) !void {
     const smp = @import("std").heap.smp_allocator;
 
     return runner.run(smp, opts);
 }
 
-fn pageAlloc(opts: TestOpts) !?Profiling {
+fn pageAlloc(opts: TestOpts) !void {
     const page = @import("std").heap.page_allocator;
 
     return runner.run(page, opts);

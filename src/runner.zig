@@ -27,7 +27,7 @@ pub const TestInformation = struct {
     test_fn: TestFn,
 };
 
-pub const ConstrFn = *const fn (TestOpts) anyerror!?Statistics.Profiling;
+pub const ConstrFn = *const fn (TestOpts) anyerror!void;
 
 pub const AllocatorCharacteristics = struct {
     thread_safe: bool = true,
@@ -46,28 +46,18 @@ pub const TestOpts = struct {
     test_fn: TestFn,
     timeout_ns: ?u64 = null,
     tty: std.io.tty.Config,
+    profiling: *Profiling,
 };
 
-pub fn run(alloc: Allocator, opts: TestOpts) !?Statistics.Profiling {
-    return switch (opts.type) {
-        .testing, .benchmarking => blk: {
-            try opts.test_fn(alloc);
+pub const Profiling = statistics.Profiling;
 
-            break :blk null;
-        },
-        .profiling => blk: {
-            var profiler = ProfilingAllocator.init(alloc, std.heap.page_allocator);
-            errdefer _ = profiler.dumpErrors(std.io.getStdErr());
+pub fn run(alloc: Allocator, opts: TestOpts) !void {
+    return switch (opts.type) {
+        .testing, .benchmarking => try opts.test_fn(alloc),
+        .profiling => {
+            var profiler = ProfilingAllocator.init(alloc, opts.profiling);
 
             try opts.test_fn(profiler.allocator());
-
-            // FIXME: ew error
-            if (profiler.dumpErrors(std.io.getStdErr())) {
-                return error.ProfileError;
-            }
-
-            // FIXME: touch profiler
-            break :blk try profiler.getStats();
         },
     };
 }
@@ -78,13 +68,19 @@ pub const StatsRet = struct {
     stderr: File,
     err_pipe: File,
     rusage: posix.rusage,
-    stats: ?Statistics.Ret,
+    performance: Performance.Ret,
+    profiling: ?Profiling,
 
     pub fn deinit(self: @This()) void {
         self.err_pipe.close();
         self.stderr.close();
         self.stdout.close();
     }
+};
+
+pub const ChildRet = struct {
+    performance: Performance.Ret,
+    profiling: ?Profiling,
 };
 
 pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
@@ -94,21 +90,35 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
             const ipc_write = ret.ipc_write;
             // const ipc_read = fork.ipc_read;
 
-            var stats = Statistics.init() catch |err|
+            var stats = Performance.init() catch |err|
                 StatusCode.exitFatal(err, err_pipe);
 
-            const profile_stats = constr_fn(opts) catch |err| {
+            constr_fn(opts) catch |err| {
                 if (@errorReturnTrace()) |st| {
                     process.dumpStackTrace(st.*, err_pipe.writer(), opts.tty);
                 }
                 StatusCode.exitFatal(err, err_pipe);
             };
-            const child_ret = stats.read(profile_stats) catch |err|
+
+            // FIXME: This is ugly
+            //
+            // For future reference, this is taking in a profiling instance
+            // to write it all at once in a second
+            const perf = stats.read() catch |err|
                 StatusCode.exitFatal(err, err_pipe);
             stats.deinit();
 
+            const child_ret: ChildRet = .{
+                .performance = perf,
+                .profiling = if (opts.type == .profiling)
+                    opts.profiling.*
+                else
+                    null,
+            };
+
             // Dump information on the IPC pipe
-            std.zon.stringify.serialize(child_ret, .{}, ipc_write.writer()) catch |err|
+            @setEvalBranchQuota(2000);
+            std.zon.stringify.serialize(child_ret, .{ .whitespace = false }, ipc_write.writer()) catch |err|
                 StatusCode.exitFatal(err, err_pipe);
 
             StatusCode.exitSucess();
@@ -117,7 +127,6 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
         .parent => |ret| {
             defer ret.stdin.close();
             defer ret.ipc_read.close();
-            errdefer process.killPid(ret.pid, null);
 
             var rusage: posix.rusage = undefined;
             const term = try process.waitOnFork(
@@ -126,25 +135,27 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
                 opts.timeout_ns,
             );
 
-            const stats: ?Statistics.Ret = blk: {
+            const stats: ChildRet = if (opts.type == .testing)
+                undefined
+            else blk: {
                 var buf: [4096]u8 = undefined;
-                const amt = ret.ipc_read.read(&buf) catch break :blk null;
+                const amt = try ret.ipc_read.read(&buf);
 
                 // -1 because we need to make it sentinel terminated
-                if (amt >= buf.len - 1) break :blk null;
+                if (amt >= buf.len - 1) return error.BufferTooSmall;
 
                 // HACK: ew
                 buf[amt] = 0;
                 const source: [:0]const u8 = @ptrCast(buf[0..amt]);
 
-                comptime assert(!requiresAllocator(Statistics.Ret));
-                break :blk std.zon.parse.fromSlice(
-                    Statistics.Ret,
+                comptime assert(!requiresAllocator(ChildRet));
+                break :blk try std.zon.parse.fromSlice(
+                    ChildRet,
                     alloc,
                     source,
                     null,
                     .{},
-                ) catch null;
+                );
             };
 
             return .{
@@ -153,7 +164,8 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
                 .stderr = ret.stderr,
                 .err_pipe = ret.err_pipe,
                 .rusage = rusage,
-                .stats = stats,
+                .performance = stats.performance,
+                .profiling = stats.profiling,
             };
         },
     }
@@ -229,14 +241,15 @@ pub fn runAll(
 
             try logger.startConstr(constr_info);
 
+            var current_run: Run = .init;
+
             const test_opts: TestOpts = .{
                 .type = opts.type,
                 .test_fn = test_info.test_fn,
                 .timeout_ns = test_info.timeout_ns,
                 .tty = opts.tty,
+                .profiling = &current_run.profiling,
             };
-
-            var running_stats: RunStats = .{};
 
             const runtime: u64 = if (opts.type == .testing or test_info.charactaristics.failing)
                 0
@@ -284,20 +297,17 @@ pub fn runAll(
                     },
                 }
 
-                running_stats.runs.add(1);
-                if (ret.stats) |stats| {
-                    running_stats.total_time.add(stats.wall_time);
-                    running_stats.total_cache_miss_percent.add(stats.perf.getCacheMissPercent());
-
-                    if (stats.profile) |profile| {
-                        running_stats.allocations.add(profile.allocations);
-                    }
+                current_run.runs += 1;
+                current_run.time.add(@floatFromInt(ret.performance.wall_time));
+                current_run.cache_miss_percent.add(ret.performance.perf.getCacheMissPercent());
+                current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
+                if (opts.type == .profiling) {
+                    current_run.profiling = ret.profiling.?;
                 }
-                running_stats.total_max_rss.add(@intCast(ret.rusage.maxrss * 1024));
             }
 
             if (!any_failed) {
-                try logger.runSucess(alloc, running_stats);
+                try logger.runSucess(alloc, &current_run);
             }
         }
     }
@@ -377,16 +387,13 @@ const Filter = struct {
     }
 };
 
-// FIXME: Workaround to not have to import profiling in main
-// this indicates a refactor
-pub const Profiling = Statistics.Profiling;
-
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
 const profiling = @import("profiling.zig");
 const process = @import("process.zig");
 const builtin = @import("builtin");
+const statistics = @import("statistics.zig");
 
 const assert = std.debug.assert;
 
@@ -397,7 +404,7 @@ const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const ProfilingAllocator = profiling.ProfilingAllocator;
 const RunLogger = @import("RunLogger.zig");
-const Statistics = @import("Statistics.zig");
-const RunStats = RunLogger.RunStats;
+const Performance = @import("Performance.zig");
 const StatusCode = process.StatusCode;
 const Random = std.Random;
+const Run = statistics.Run;

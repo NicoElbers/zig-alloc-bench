@@ -1,4 +1,4 @@
-runs: std.ArrayListUnmanaged(RunStats) = .empty,
+runs: std.ArrayListUnmanaged(Run.Zonable) = .empty,
 output: ?Output = null,
 fail_count: u32 = 0,
 opts: Opts,
@@ -19,7 +19,7 @@ pub const Output = struct {
 
 pub const Zon = struct {
     build: Build = .{},
-    runs: []const RunStats = &.{},
+    runs: []const Run.Zonable = &.{},
 
     pub const Build = struct {
         optimization: std.builtin.OptimizeMode = buitin.mode,
@@ -33,116 +33,6 @@ pub fn zonable(self: Self) Zon {
     return .{
         .build = .{},
         .runs = self.runs.items,
-    };
-}
-
-pub const RunStats = struct {
-    runs: Tally(u64, .counter) = .init,
-    total_time: Tally(u64, .time) = .init,
-    total_cache_miss_percent: Tally(f128, .percent) = .init,
-    allocations: Tally(u64, .count) = .init,
-    total_max_rss: Tally(u64, .memory) = .init,
-};
-
-pub const Unit = enum {
-    time,
-    count,
-    counter,
-    memory,
-    percent,
-
-    pub fn convert(unit: @This(), value: f128) struct { f128, []const u8 } {
-        return switch (unit) {
-            .percent => .{ value, "%" },
-            .count, .counter => blk: {
-                var limit: f128 = 1;
-                inline for (.{ "", "K", "M", "G", "T", "P" }) |name| {
-                    defer limit *= 1000;
-                    assert(std.math.isNormal(limit));
-
-                    if (value < limit * 1000) {
-                        break :blk .{ value / limit, name };
-                    }
-                }
-                break :blk .{ value / limit, "P" };
-            },
-            .memory => blk: {
-                var limit: f128 = 1;
-                inline for (.{ "B", "KiB", "MiB", "GiB", "TiB", "PiB" }) |name| {
-                    defer limit *= 1024;
-                    assert(std.math.isNormal(limit));
-
-                    if (value < limit * 1024) {
-                        break :blk .{ value / limit, name };
-                    }
-                }
-                break :blk .{ value / limit, "PiB" };
-            },
-            .time => blk: {
-                var limit: f128 = 1;
-                inline for (
-                    .{ 1000, 1000, 1000, 60, 60, 24, 7 },
-                    .{ "ns", "us", "ms", "s", "min", "hours", "days" },
-                ) |threshold, name| {
-                    defer limit *= threshold;
-
-                    if (value < limit * threshold) {
-                        break :blk .{ value / limit, name };
-                    }
-                }
-                break :blk .{ value / limit, "days" };
-            },
-        };
-    }
-};
-
-fn Tally(comptime T: type, comptime unit: Unit) type {
-    switch (@typeInfo(T)) {
-        .int,
-        .comptime_int,
-        .float,
-        .comptime_float,
-        => {},
-        else => @compileError("Not supported"),
-    }
-
-    return struct {
-        count: u32,
-        total_value: f128,
-
-        pub const init: @This() = .{
-            .count = 0,
-            .total_value = 0,
-        };
-
-        pub fn add(self: *@This(), value: T) void {
-            self.count += 1;
-
-            self.total_value += switch (@typeInfo(T)) {
-                .int, .comptime_int => @floatFromInt(value),
-                else => @floatCast(value),
-            };
-        }
-
-        pub fn get(self: @This()) struct { f128, []const u8 } {
-            if (unit == .counter) return unit.convert(self.total_value);
-            if (self.count == 0) return unit.convert(0);
-
-            const val = self.total_value / @as(f128, @floatFromInt(self.count));
-
-            return unit.convert(val);
-        }
-
-        pub fn dump(self: @This(), prefix: []const u8, width: u16, file: File) !void {
-            const count, const suffix = self.get();
-
-            try file.writer().print("{s}:", .{prefix});
-
-            const pad_width = width -| prefix.len -| 1;
-            for (0..pad_width) |_| try file.writeAll(" ");
-
-            try file.writer().print("{d:0>2.2}{s}\n", .{ count, suffix });
-        }
     };
 }
 
@@ -275,9 +165,8 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
     }
 }
 
-pub fn runSucess(self: *Self, alloc: Allocator, run_info: RunStats) !void {
+pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
     const stdout = std.io.getStdOut();
-    const padding = 20;
 
     if (self.opts.type == .testing) {
         try stdout.writeAll("Run Sucess\n");
@@ -289,15 +178,37 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: RunStats) !void {
 
     if (!self.opts.cli) return;
 
-    try run_info.runs.dump("- Runs", padding, stdout);
-    try run_info.total_time.dump("- Time", padding, stdout);
-    try run_info.total_max_rss.dump("- Max RSS", padding, stdout);
-    try run_info.allocations.dump("- Allocations", padding, stdout);
-    try run_info.total_cache_miss_percent.dump("- Cache misses", padding, stdout);
+    // FIXME: Ugly as all hell but it works for now
+    // zig fmt: off
+    try statistics.Unit.counter.write(stdout , "Runs                   ", @floatFromInt(run_info.runs));
+    try statistics.Unit.time.write(stdout    , "Time                   ", run_info.time.p50());
+    try statistics.Unit.memory.write(stdout  , "Max rss                ", run_info.max_rss.p50());
+    try statistics.Unit.percent.write(stdout , "Cache misses           ", run_info.cache_miss_percent.p50());
+    // zig fmt: on
+
+    const profiling = run_info.profiling;
+
+    if (profiling.allocations.success.isValid())
+        try statistics.Unit.time.write(stdout, "Successful allocations ", profiling.allocations.success.p50());
+    if (profiling.allocations.failure.isValid())
+        try statistics.Unit.time.write(stdout, "Failed allocations     ", profiling.allocations.failure.p50());
+
+    if (profiling.resizes.success.isValid())
+        try statistics.Unit.time.write(stdout, "Sucessful resizes      ", profiling.resizes.success.p50());
+    if (profiling.resizes.failure.isValid())
+        try statistics.Unit.time.write(stdout, "Failed resizes         ", profiling.resizes.failure.p50());
+
+    if (profiling.remaps.success.isValid())
+        try statistics.Unit.time.write(stdout, "Sucessful remaps       ", profiling.remaps.success.p50());
+    if (profiling.remaps.failure.isValid())
+        try statistics.Unit.time.write(stdout, "Failed remaps          ", profiling.remaps.failure.p50());
+
+    if (profiling.frees.isValid())
+        try statistics.Unit.time.write(stdout, "Frees                  ", profiling.frees.p50());
 }
 
-fn updateFile(self: *Self, alloc: Allocator, run_info: RunStats) !void {
-    try self.runs.append(alloc, run_info);
+fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {
+    try self.runs.append(alloc, run_info.zonable());
 
     if (self.output) |*out| {
         const path = try out.incrementName(alloc);
@@ -345,6 +256,7 @@ pub fn finish(self: *Self, alloc: Allocator) !void {
 const std = @import("std");
 const buitin = @import("builtin");
 const runner = @import("runner.zig");
+const statistics = @import("statistics.zig");
 
 const assert = std.debug.assert;
 
@@ -359,3 +271,4 @@ const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const StatsRet = runner.StatsRet;
 const File = std.fs.File;
+const Run = statistics.Run;
