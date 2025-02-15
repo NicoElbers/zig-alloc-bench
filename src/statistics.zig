@@ -131,7 +131,7 @@ pub fn P2Quantiles(comptime p: f64) type {
                 @branchHint(.unlikely);
 
                 const count_f: f64 = @floatFromInt(count);
-                const idx: usize = @intFromFloat(@round(p * count_f));
+                const idx: usize = @intFromFloat(@floor(p * count_f));
 
                 break :blk q[idx];
             } else q[2];
