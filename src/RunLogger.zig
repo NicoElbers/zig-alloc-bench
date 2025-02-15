@@ -169,7 +169,7 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
     const stdout = std.io.getStdOut();
 
     if (self.opts.type == .testing) {
-        try stdout.writeAll("Run Sucess\n");
+        try statistics.Unit.time.write(stdout, "Success in", run_info.time.p50());
         return;
     }
 
@@ -180,31 +180,31 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
 
     // FIXME: Ugly as all hell but it works for now
     // zig fmt: off
-    try statistics.Unit.counter.write(stdout , "Runs                   ", @floatFromInt(run_info.runs));
-    try statistics.Unit.time.write(stdout    , "Time                   ", run_info.time.p50());
-    try statistics.Unit.memory.write(stdout  , "Max rss                ", run_info.max_rss.p50());
-    try statistics.Unit.percent.write(stdout , "Cache misses           ", run_info.cache_miss_percent.p50());
+    try statistics.Unit.counter.write(stdout , "- Runs                   ", @floatFromInt(run_info.runs));
+    try statistics.Unit.time.write(stdout    , "- Time                   ", run_info.time.p50());
+    try statistics.Unit.memory.write(stdout  , "- Max rss                ", run_info.max_rss.p50());
+    try statistics.Unit.percent.write(stdout , "- Cache misses           ", run_info.cache_miss_percent.p50());
     // zig fmt: on
 
     const profiling = run_info.profiling;
 
     if (profiling.allocations.success.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Successful allocations ", v);
+        try statistics.Unit.time.write(stdout, "- Successful allocations ", v);
     if (profiling.allocations.failure.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Failed allocations     ", v);
+        try statistics.Unit.time.write(stdout, "- Failed allocations     ", v);
 
     if (profiling.resizes.success.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Sucessful resizes      ", v);
+        try statistics.Unit.time.write(stdout, "- Sucessful resizes      ", v);
     if (profiling.resizes.failure.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Failed resizes         ", v);
+        try statistics.Unit.time.write(stdout, "- Failed resizes         ", v);
 
     if (profiling.remaps.success.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Sucessful remaps       ", v);
+        try statistics.Unit.time.write(stdout, "- Sucessful remaps       ", v);
     if (profiling.remaps.failure.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Failed remaps          ", v);
+        try statistics.Unit.time.write(stdout, "- Failed remaps          ", v);
 
     if (profiling.frees.p50()) |v|
-        try statistics.Unit.time.write(stdout, "Frees                  ", v);
+        try statistics.Unit.time.write(stdout, "- Frees                  ", v);
 }
 
 fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {
