@@ -17,10 +17,10 @@ pub const default = [_]ContructorInformation{
 };
 
 fn debugAlloc(opts: TestOpts) !void {
-    const DebugAllocator = @import("std").heap.DebugAllocator;
+    const DebugAllocator = std.heap.DebugAllocator;
 
     var dbg = DebugAllocator(.{
-        .stack_trace_frames = if (@import("std").debug.sys_can_stack_trace) 6 else 0,
+        .stack_trace_frames = if (std.debug.sys_can_stack_trace) 6 else 0,
         .safety = true,
         .thread_safe = true,
         .retain_metadata = true,
@@ -35,17 +35,18 @@ fn debugAlloc(opts: TestOpts) !void {
 }
 
 fn smpAlloc(opts: TestOpts) !void {
-    const smp = @import("std").heap.smp_allocator;
+    const smp = std.heap.smp_allocator;
 
     return runner.run(smp, opts);
 }
 
 fn pageAlloc(opts: TestOpts) !void {
-    const page = @import("std").heap.page_allocator;
+    const page = std.heap.page_allocator;
 
     return runner.run(page, opts);
 }
 
+const std = @import("std");
 const runner = @import("runner");
 const TestOpts = runner.TestOpts;
 const TestFn = runner.TestFn;
