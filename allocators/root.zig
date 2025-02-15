@@ -1,4 +1,4 @@
-pub const default: []const ContructorInformation = &.{
+pub const default = [_]ContructorInformation{
     .{
         .name = "Debug allocator",
         .characteristics = .default,
@@ -9,9 +9,14 @@ pub const default: []const ContructorInformation = &.{
         .characteristics = .default,
         .constr_fn = &smpAlloc,
     },
+    .{
+        .name = "Page allocator",
+        .characteristics = .default,
+        .constr_fn = &pageAlloc,
+    },
 };
 
-fn debugAlloc(opts: runner.TestOpts) !?Profiling {
+fn debugAlloc(opts: TestOpts) !?Profiling {
     const DebugAllocator = @import("std").heap.DebugAllocator;
 
     var dbg = DebugAllocator(.{
@@ -29,13 +34,20 @@ fn debugAlloc(opts: runner.TestOpts) !?Profiling {
     return ret;
 }
 
-fn smpAlloc(opts: runner.TestOpts) !?Profiling {
+fn smpAlloc(opts: TestOpts) !?Profiling {
     const smp = @import("std").heap.smp_allocator;
 
     return runner.run(smp, opts);
 }
 
+fn pageAlloc(opts: TestOpts) !?Profiling {
+    const page = @import("std").heap.page_allocator;
+
+    return runner.run(page, opts);
+}
+
 const runner = @import("runner");
+const TestOpts = runner.TestOpts;
 const TestFn = runner.TestFn;
 const Profiling = runner.Profiling;
 const ContructorInformation = runner.ContructorInformation;

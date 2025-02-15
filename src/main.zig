@@ -126,7 +126,7 @@ pub fn main() !void {
     try runner.runAll(
         gpa.allocator(),
         tests.default,
-        allocators.default,
+        &allocators.default,
         opts,
     );
 }
