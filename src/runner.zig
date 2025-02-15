@@ -342,7 +342,7 @@ const Filter = struct {
         // Whitelist
         if (self.test_whitelist) |whitelist| {
             for (whitelist) |item|
-                if (std.mem.eql(u8, item, test_info.name)) return true;
+                if (!std.mem.eql(u8, item, test_info.name)) return true;
         }
 
         return false;
@@ -362,7 +362,7 @@ const Filter = struct {
         // Whitelist
         if (self.constr_whitelist) |whitelist| {
             for (whitelist) |item|
-                if (std.mem.eql(u8, item, constr_info.name)) return true;
+                if (!std.mem.eql(u8, item, constr_info.name)) return true;
         }
 
         return false;
