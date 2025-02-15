@@ -264,7 +264,7 @@ pub const Tally = struct {
     }
 
     pub fn max(self: *const @This()) f64 {
-        return self.median.min();
+        return self.median.max();
     }
 
     pub fn isValid(self: *const @This()) bool {
@@ -292,9 +292,85 @@ pub const Tally = struct {
     };
 };
 
+pub const LazyTally = struct {
+    tally: ?Tally = null,
+
+    pub const init: LazyTally = .{};
+
+    fn create(self: *@This()) void {
+        @branchHint(.unlikely);
+        self.tally = .init;
+    }
+
+    pub fn add(self: *@This(), value: f64) void {
+        if (self.tally == null) self.create();
+
+        self.tally.?.add(value);
+    }
+
+    pub fn min(self: *const @This()) ?f64 {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        return self.tally.?.min();
+    }
+
+    pub fn p25(self: *const @This()) ?f64 {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        return self.tally.?.p25();
+    }
+
+    pub fn p50(self: *const @This()) ?f64 {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        return self.tally.?.p50();
+    }
+
+    pub fn p75(self: *const @This()) ?f64 {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        return self.tally.?.p75();
+    }
+
+    pub fn max(self: *const @This()) ?f64 {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        return self.tally.?.max();
+    }
+
+    pub fn zonable(self: *const LazyTally) ?Tally.Zonable {
+        return if (self.tally) |t| t.zonable() else null;
+    }
+};
+
 pub const FallableTally = struct {
-    success: Tally = .init,
-    failure: Tally = .init,
+    // success: ?Tally = null,
+    // failure: ?Tally = null,
+    success: LazyTally = .init,
+    failure: LazyTally = .init,
+
+    pub fn addSuccess(self: *FallableTally, value: f64) void {
+        self.success.add(value);
+    }
+
+    pub fn addFailure(self: *FallableTally, value: f64) void {
+        self.failure.add(value);
+    }
 
     pub fn zonable(self: *const FallableTally) Zonable {
         return .{
@@ -315,7 +391,7 @@ pub const Profiling = struct {
     allocations: FallableTally = .init,
     resizes: FallableTally = .init,
     remaps: FallableTally = .init,
-    frees: Tally = .init,
+    frees: LazyTally = .init,
 
     pub fn zonable(self: *const Profiling) Zonable {
         return .{

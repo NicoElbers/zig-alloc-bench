@@ -188,23 +188,23 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
 
     const profiling = run_info.profiling;
 
-    if (profiling.allocations.success.isValid())
-        try statistics.Unit.time.write(stdout, "Successful allocations ", profiling.allocations.success.p50());
-    if (profiling.allocations.failure.isValid())
-        try statistics.Unit.time.write(stdout, "Failed allocations     ", profiling.allocations.failure.p50());
+    if (profiling.allocations.success.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Successful allocations ", v);
+    if (profiling.allocations.failure.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Failed allocations     ", v);
 
-    if (profiling.resizes.success.isValid())
-        try statistics.Unit.time.write(stdout, "Sucessful resizes      ", profiling.resizes.success.p50());
-    if (profiling.resizes.failure.isValid())
-        try statistics.Unit.time.write(stdout, "Failed resizes         ", profiling.resizes.failure.p50());
+    if (profiling.resizes.success.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Sucessful resizes      ", v);
+    if (profiling.resizes.failure.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Failed resizes         ", v);
 
-    if (profiling.remaps.success.isValid())
-        try statistics.Unit.time.write(stdout, "Sucessful remaps       ", profiling.remaps.success.p50());
-    if (profiling.remaps.failure.isValid())
-        try statistics.Unit.time.write(stdout, "Failed remaps          ", profiling.remaps.failure.p50());
+    if (profiling.remaps.success.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Sucessful remaps       ", v);
+    if (profiling.remaps.failure.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Failed remaps          ", v);
 
-    if (profiling.frees.isValid())
-        try statistics.Unit.time.write(stdout, "Frees                  ", profiling.frees.p50());
+    if (profiling.frees.p50()) |v|
+        try statistics.Unit.time.write(stdout, "Frees                  ", v);
 }
 
 fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {

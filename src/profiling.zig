@@ -40,9 +40,9 @@ pub const ProfilingAllocator = struct {
         const time = self.timer.read();
 
         if (maybe_ptr) |_| {
-            self.profiling.allocations.success.add(@floatFromInt(time));
+            self.profiling.allocations.addSuccess(@floatFromInt(time));
         } else {
-            self.profiling.allocations.failure.add(@floatFromInt(time));
+            self.profiling.allocations.addFailure(@floatFromInt(time));
         }
 
         return maybe_ptr;
@@ -56,9 +56,9 @@ pub const ProfilingAllocator = struct {
         const time = self.timer.read();
 
         if (did_resize) {
-            self.profiling.resizes.success.add(@floatFromInt(time));
+            self.profiling.resizes.addSuccess(@floatFromInt(time));
         } else {
-            self.profiling.resizes.failure.add(@floatFromInt(time));
+            self.profiling.resizes.addFailure(@floatFromInt(time));
         }
 
         return did_resize;
@@ -72,9 +72,9 @@ pub const ProfilingAllocator = struct {
         const time = self.timer.read();
 
         if (maybe_ptr) |_| {
-            self.profiling.remaps.success.add(@floatFromInt(time));
+            self.profiling.remaps.addSuccess(@floatFromInt(time));
         } else {
-            self.profiling.remaps.failure.add(@floatFromInt(time));
+            self.profiling.remaps.addFailure(@floatFromInt(time));
         }
 
         return maybe_ptr;
