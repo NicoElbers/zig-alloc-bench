@@ -2,7 +2,7 @@ pub const default: []const ContructorInformation = &.{
     .{
         .name = "Debug allocator",
         .characteristics = .default,
-        .constr_fn = &simpleGpa,
+        .constr_fn = &debugAlloc,
     },
     .{
         .name = "SMP allocator",
@@ -11,20 +11,30 @@ pub const default: []const ContructorInformation = &.{
     },
 };
 
-fn simpleGpa(opts: runner.TestOpts) !?Profiling {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
+fn debugAlloc(opts: runner.TestOpts) !?Profiling {
+    const DebugAllocator = @import("std").heap.DebugAllocator;
 
-    return runner.run(gpa.allocator(), opts);
+    var dbg = DebugAllocator(.{
+        .stack_trace_frames = if (@import("std").debug.sys_can_stack_trace) 6 else 0,
+        .safety = true,
+        .thread_safe = true,
+        .retain_metadata = true,
+        .resize_stack_traces = true,
+    }).init;
+
+    const ret = runner.run(dbg.allocator(), opts);
+
+    if (dbg.deinit() != .ok) return error.Leaked;
+
+    return ret;
 }
 
 fn smpAlloc(opts: runner.TestOpts) !?Profiling {
-    const smp = std.heap.smp_allocator;
+    const smp = @import("std").heap.smp_allocator;
 
     return runner.run(smp, opts);
 }
 
-const std = @import("std");
 const runner = @import("runner");
 const TestFn = runner.TestFn;
 const Profiling = runner.Profiling;
