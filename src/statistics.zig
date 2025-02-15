@@ -230,7 +230,7 @@ pub const Unit = enum {
     pub fn write(unit: @This(), writer: File, prefix: []const u8, value: f64) !void {
         const val, const suffix = unit.convert(value);
 
-        try writer.writer().print("{s}: {d: >6.2} {s}\n", .{ prefix, val, suffix });
+        try writer.writer().print("- {s}: {d: >6.2} {s}\n", .{ prefix, val, suffix });
     }
 };
 
