@@ -135,6 +135,19 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
                 opts.timeout_ns,
             );
 
+            // FIXME: Union
+            if (term != .Exited or term.Exited != 0) {
+                return .{
+                    .term = term,
+                    .stdout = ret.stdout,
+                    .stderr = ret.stderr,
+                    .err_pipe = ret.err_pipe,
+                    .rusage = rusage,
+                    .performance = undefined,
+                    .profiling = undefined,
+                };
+            }
+
             const stats: ChildRet = if (opts.type == .testing)
                 undefined
             else blk: {
