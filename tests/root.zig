@@ -13,6 +13,11 @@ pub const default = [_]TestInformation{
         .test_fn = &manyAllocResizeFree,
     },
     .{
+        .name = "Many allocations, remaps and frees",
+        .timeout_ns = std.time.ns_per_s * 2,
+        .test_fn = &manyAllocRemapsFree,
+    },
+    .{
         .name = "Appending to arraylist",
         .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendingToArrayList,
@@ -93,6 +98,34 @@ fn manyAllocResizeFree(alloc: Allocator) !void {
         if (alloc.resize(arr, new_len)) arr.len = new_len;
 
         alloc.free(arr);
+    }
+}
+
+fn manyAllocRemapsFree(alloc: Allocator) !void {
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    for (0..10_000) |_| {
+        const arr = try alloc.alloc(u64, rand.intRangeAtMost(usize, 1, 10_000));
+
+        @memset(arr, rand.int(u64));
+
+        const new_len = rand.intRangeAtMost(usize, 1, 10_000);
+        const arr2 = alloc.remap(arr, new_len) orelse blk: {
+            defer alloc.free(arr);
+
+            const arr2 = try alloc.alloc(u64, new_len);
+
+            const min_len = @min(arr2.len, arr.len);
+
+            @memcpy(arr2[0..min_len], arr[0..min_len]);
+            break :blk arr2;
+        };
+
+        if (arr2.len > arr.len)
+            @memset(arr2[arr.len..], rand.int(u64));
+
+        alloc.free(arr2);
     }
 }
 
