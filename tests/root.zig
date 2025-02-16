@@ -78,9 +78,15 @@ fn manyAllocFree(alloc: Allocator) !void {
 }
 
 fn manyAllocResizeFree(alloc: Allocator) !void {
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
     for (0..10_000) |_| {
-        const arr = try alloc.alloc(u32, 100);
-        // _ = alloc.resize(arr, 50);
+        var arr = try alloc.alloc(u32, rand.intRangeAtMost(usize, 1, 10_000));
+
+        const new_len = rand.intRangeAtMost(usize, 1, 10_000);
+        if (alloc.resize(arr, new_len)) arr.len = new_len;
+
         alloc.free(arr);
     }
 }
