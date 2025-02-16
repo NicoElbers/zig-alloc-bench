@@ -28,6 +28,7 @@
             zig_bound
             zls_bound
             lldb
+            valgrind
           ];
         };
       });
