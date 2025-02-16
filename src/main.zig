@@ -106,6 +106,8 @@ pub fn parseArgs(alloc: Allocator, default: RunOpts) !RunOpts {
         } else if (eql(u8, arg, "--min_time") or eql(u8, arg, "-mt")) {
             const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
             opts.min_runtime_ns = std.fmt.parseInt(u64, val, 10) catch fatal(arg, .{ .invalid = u64 });
+        } else if (eql(u8, arg, "--debug") or eql(u8, arg, "-d")) {
+            opts.debug = true;
         } else fatal(arg, .{ .unknown = enum { type, filter, tty, prefix, dry, min_time } });
     }
 

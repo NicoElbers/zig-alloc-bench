@@ -214,6 +214,7 @@ pub const Opts = struct {
     prefix: [:0]const u8 = "runs",
     dry_run: bool = false,
     quiet: bool = false,
+    debug: bool = false,
 
     pub const Type = enum(u8) {
         testing,
@@ -243,6 +244,30 @@ pub fn runAll(
     });
 
     std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
+
+    // Minimal, single threaded, single process version of the runner
+    if (opts.debug) {
+        tests: for (tests) |test_info| {
+            if (filter.filterTest(test_info)) continue :tests;
+
+            constrs: for (constrs) |constr_info| {
+                if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+
+                var current_run: Run = .init;
+
+                const test_opts: TestOpts = .{
+                    .type = opts.type,
+                    .test_fn = test_info.test_fn,
+                    .timeout_ns = test_info.timeout_ns,
+                    .tty = opts.tty,
+                    .profiling = &current_run.profiling,
+                };
+
+                try constr_info.constr_fn(test_opts);
+            }
+        }
+        return;
+    }
 
     tests: for (tests) |test_info| {
         if (filter.filterTest(test_info)) continue :tests;
