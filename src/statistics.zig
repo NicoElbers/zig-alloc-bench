@@ -149,7 +149,7 @@ pub fn P2Quantiles(comptime p: f64) type {
             assert(self.isValid());
 
             return if (count < 5)
-                q[count]
+                q[count - 1]
             else
                 q[4];
         }
