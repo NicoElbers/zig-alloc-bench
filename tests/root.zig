@@ -23,6 +23,11 @@ pub const default = [_]TestInformation{
         .test_fn = &appendingToMultipleArrayLists,
     },
     .{
+        .name = "Random access append",
+        .timeout_ns = std.time.ns_per_s,
+        .test_fn = &appendAccessArray,
+    },
+    .{
         .name = "No free",
         .charactaristics = .{
             .failing = true,
@@ -116,6 +121,28 @@ fn appendingToMultipleArrayLists(alloc: Allocator) !void {
     }
 }
 
+fn appendAccessArray(alloc: Allocator) !void {
+    const Action = enum { append, access };
+
+    var arr: std.ArrayListUnmanaged(u64) = .empty;
+    defer arr.deinit(alloc);
+
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    try arr.append(alloc, 0xdeadbeef);
+
+    for (0..10_000) |_| {
+        switch (rand.enumValue(Action)) {
+            .access => {
+                const arr_idx = rand.intRangeAtMost(u64, 0, arr.items.len - 1);
+                arr.items[arr_idx] = rand.int(u64);
+            },
+            .append => try arr.append(alloc, rand.int(u64)),
+        }
+    }
+}
+
 fn oomTest(alloc: Allocator) !void {
     const buf = try alloc.alloc(u8, std.math.maxInt(usize) / 2);
     alloc.free(buf);
@@ -186,7 +213,10 @@ const Alignments = [_]std.mem.Alignment{
     .@"32",
     .@"64",
 
+    // Biggest power of 2
     @enumFromInt(std.math.log2_int(u29, 1 << 28)),
+
+    // Biggest value
     @enumFromInt(std.math.log2_int(u29, 1 << 29 - 1)),
 };
 
