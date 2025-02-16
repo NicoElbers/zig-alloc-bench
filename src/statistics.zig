@@ -183,48 +183,60 @@ pub const Unit = enum {
     memory,
     percent,
 
-    pub fn convert(unit: @This(), value: f64) struct { f64, []const u8 } {
-        return switch (unit) {
-            .percent => .{ value, "%" },
-            .count, .counter => blk: {
+    pub fn convert(unit: @This(), value: f64) struct { f64, [3]u8 } {
+        var suffix: [3]u8 = @splat(' ');
+        const val = blk: switch (unit) {
+            .percent => {
+                suffix[0] = '%';
+                break :blk value;
+            },
+            .count, .counter => {
                 var limit: f64 = 1;
                 inline for (.{ "", "K", "M", "G", "T", "P" }) |name| {
                     defer limit *= 1000;
                     assert(std.math.isNormal(limit));
 
                     if (value < limit * 1000) {
-                        break :blk .{ value / limit, name };
+                        suffix[0..name.len].* = name.*;
+                        break :blk value / limit;
                     }
                 }
-                break :blk .{ value / limit, "P" };
+                suffix[0] = 'P';
+                break :blk value / limit;
             },
-            .memory => blk: {
+            .memory => {
                 var limit: f64 = 1;
                 inline for (.{ "B", "KiB", "MiB", "GiB", "TiB", "PiB" }) |name| {
                     defer limit *= 1024;
                     assert(std.math.isNormal(limit));
 
                     if (value < limit * 1024) {
-                        break :blk .{ value / limit, name };
+                        suffix[0..name.len].* = name.*;
+                        break :blk value / limit;
                     }
                 }
-                break :blk .{ value / limit, "PiB" };
+                suffix[0..3].* = "PiB".*;
+                break :blk value / limit;
             },
-            .time => blk: {
+            .time => {
                 var limit: f64 = 1;
                 inline for (
                     .{ 1000, 1000, 1000, 60, 60, 24, 7 },
-                    .{ "ns", "us", "ms", "s", "min", "hours", "days" },
+                    .{ "ns", "us", "ms", "s", "min", "h", "d" },
                 ) |threshold, name| {
                     defer limit *= threshold;
 
                     if (value < limit * threshold) {
-                        break :blk .{ value / limit, name };
+                        suffix[0..name.len].* = name.*;
+                        break :blk value / limit;
                     }
                 }
-                break :blk .{ value / limit, "days" };
+                suffix[0..3].* = "day".*;
+                break :blk value / limit;
             },
         };
+
+        return .{ val, suffix };
     }
 
     pub fn write(unit: @This(), writer: File, prefix: []const u8, value: f64) !void {
@@ -267,8 +279,32 @@ pub const Tally = struct {
         return self.median.max();
     }
 
+    pub fn getCount(self: *const @This()) usize {
+        return self.median.count;
+    }
+
     pub fn isValid(self: *const @This()) bool {
         return self.median.isValid();
+    }
+
+    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, prefix: []const u8) !void {
+        const p50_v, const p50_s = unit.convert(self.p50());
+        const p25_v, const p25_s = unit.convert(self.p25());
+        const p75_v, const p75_s = unit.convert(self.p75());
+        const min_v, const min_s = unit.convert(self.min());
+        const max_v, const max_s = unit.convert(self.max());
+
+        const writer = file.writer();
+
+        try writer.writeAll(prefix);
+        try writer.writeAll(": ");
+
+        for (0..width -| prefix.len -| ": ".len) |_| try writer.writeAll(" ");
+
+        try writer.print(
+            "| {d: >6.2} {s} | {d: >6.2} {s} - {d: >6.2} {s} | {d: >6.2} {s} - {d: >6.2} {s} ({d})\n",
+            .{ p50_v, p50_s, p25_v, p25_s, p75_v, p75_s, min_v, min_s, max_v, max_s, self.getCount() },
+        );
     }
 
     pub fn zonable(self: *const Tally) ?Zonable {
@@ -353,14 +389,21 @@ pub const LazyTally = struct {
         return self.tally.?.max();
     }
 
+    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, prefix: []const u8) !void {
+        if (self.tally == null) {
+            @branchHint(.unlikely);
+            return;
+        }
+
+        return self.tally.?.write(file, unit, width, prefix);
+    }
+
     pub fn zonable(self: *const LazyTally) ?Tally.Zonable {
         return if (self.tally) |t| t.zonable() else null;
     }
 };
 
 pub const FallableTally = struct {
-    // success: ?Tally = null,
-    // failure: ?Tally = null,
     success: LazyTally = .init,
     failure: LazyTally = .init,
 
@@ -370,6 +413,11 @@ pub const FallableTally = struct {
 
     pub fn addFailure(self: *FallableTally, value: f64) void {
         self.failure.add(value);
+    }
+
+    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, comptime prefix: []const u8) !void {
+        try self.success.write(file, unit, width, prefix ++ " success");
+        try self.failure.write(file, unit, width, prefix ++ " failure");
     }
 
     pub fn zonable(self: *const FallableTally) Zonable {
@@ -416,7 +464,7 @@ pub const Run = struct {
     runs: usize = 0,
     time: Tally = .init,
     max_rss: Tally = .init,
-    cache_miss_percent: Tally = .init,
+    cache_misses: Tally = .init,
     profiling: Profiling = .init,
 
     pub fn zonable(self: *const Run) Zonable {
@@ -424,7 +472,7 @@ pub const Run = struct {
             .runs = self.runs,
             .time = self.time.zonable(),
             .max_rss = self.max_rss.zonable(),
-            .cache_miss_percent = self.cache_miss_percent.zonable(),
+            .cache_miss_percent = self.cache_misses.zonable(),
             .profiling = self.profiling.zonable(),
         };
     }

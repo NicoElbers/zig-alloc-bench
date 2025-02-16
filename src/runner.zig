@@ -312,7 +312,7 @@ pub fn runAll(
 
                 current_run.runs += 1;
                 current_run.time.add(@floatFromInt(ret.performance.wall_time));
-                current_run.cache_miss_percent.add(ret.performance.perf.getCacheMissPercent());
+                current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
                 current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
                 if (opts.type == .profiling) {
                     current_run.profiling = ret.profiling.?;
