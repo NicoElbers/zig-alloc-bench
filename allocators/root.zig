@@ -41,7 +41,7 @@ fn smpAlloc(opts: TestOpts) !void {
 }
 
 fn pageAlloc(opts: TestOpts) !void {
-    const page = std.heap.page_allocator;
+    const page: Allocator = .{ .ptr = undefined, .vtable = &std.heap.PageAllocator.vtable };
 
     return runner.run(page, opts);
 }
@@ -52,3 +52,5 @@ const TestOpts = runner.TestOpts;
 const TestFn = runner.TestFn;
 const Profiling = runner.Profiling;
 const ContructorInformation = runner.ContructorInformation;
+
+const Allocator = std.mem.Allocator;
