@@ -210,7 +210,7 @@ pub const Unit = enum {
                     defer limit *= 1024;
                     assert(std.math.isNormal(limit));
 
-                    if (value < limit * 1024) {
+                    if (value < limit * 1000) {
                         suffix[0..name.len].* = name.*;
                         break :blk value / limit;
                     }
