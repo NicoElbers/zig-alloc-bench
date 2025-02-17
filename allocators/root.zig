@@ -1,13 +1,13 @@
 pub const default = [_]ContructorInformation{
     .{
-        .name = "Debug allocator",
-        .characteristics = .default,
-        .constr_fn = &debugAlloc,
-    },
-    .{
         .name = "SMP allocator",
         .characteristics = .default,
         .constr_fn = &smpAlloc,
+    },
+    .{
+        .name = "Debug allocator",
+        .characteristics = .default,
+        .constr_fn = &debugAlloc,
     },
     .{
         .name = "Page allocator",
