@@ -252,83 +252,83 @@ pub const Unit = enum {
 };
 
 pub const Tally = struct {
-    first: P2Quantiles(0.25) = .init,
-    median: P2Quantiles(0.5) = .init,
-    third: P2Quantiles(0.75) = .init,
+    p50: P2Quantiles(0.50) = .init,
+    p90: P2Quantiles(0.90) = .init,
+    p99: P2Quantiles(0.99) = .init,
+    outliers: usize = 0,
 
     pub const init: Tally = .{};
 
     pub fn add(self: *@This(), value: f64) void {
-        self.first.add(value);
-        self.median.add(value);
-        self.third.add(value);
+        self.p50.add(value);
+        self.p90.add(value);
+        self.p99.add(value);
+
+        if (self.getCount() < 5) return;
+
+        // MAD: https://en.wikipedia.org/wiki/Median_absolute_deviation
+        const tall_to_mad = 1.2816 * 1.4826;
+        const threshold = 3;
+
+        const p50 = self.getP50();
+        const p90 = self.getP90();
+        const mad = (p90 - p50) / tall_to_mad;
+
+        const lower = p50 - threshold * mad;
+        const upper = p50 + threshold * mad;
+
+        if (value < lower or value > upper) self.outliers += 1;
     }
 
-    pub fn min(self: *const @This()) f64 {
-        return self.median.min();
+    pub fn getOutliers(self: *const @This()) f64 {
+        return (@as(f64, @floatFromInt(self.outliers)) / @as(f64, @floatFromInt(self.getCount()))) * 100;
     }
 
-    pub fn p25(self: *const @This()) f64 {
-        return self.first.percentile();
+    pub fn getMin(self: *const @This()) f64 {
+        return self.p50.min();
     }
 
-    pub fn p50(self: *const @This()) f64 {
-        return self.median.percentile();
+    pub fn getP50(self: *const @This()) f64 {
+        return self.p50.percentile();
     }
 
-    pub fn p75(self: *const @This()) f64 {
-        return self.third.percentile();
+    pub fn getP90(self: *const @This()) f64 {
+        return self.p90.percentile();
     }
 
-    pub fn max(self: *const @This()) f64 {
-        return self.median.max();
+    pub fn getP99(self: *const @This()) f64 {
+        return self.p99.percentile();
+    }
+
+    pub fn getMax(self: *const @This()) f64 {
+        return self.p50.max();
     }
 
     pub fn getCount(self: *const @This()) usize {
-        return self.median.count;
+        return self.p50.count;
     }
 
     pub fn isValid(self: *const @This()) bool {
-        return self.median.isValid();
+        return self.p50.isValid();
     }
 
-    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, prefix: []const u8) !void {
-        const p50_v, const p50_s = unit.convert(self.p50());
-        const p25_v, const p25_s = unit.convert(self.p25());
-        const p75_v, const p75_s = unit.convert(self.p75());
-        const min_v, const min_s = unit.convert(self.min());
-        const max_v, const max_s = unit.convert(self.max());
-
-        const writer = file.writer();
-
-        try writer.writeAll(prefix);
-        try writer.writeAll(": ");
-
-        for (0..width -| prefix.len -| ": ".len) |_| try writer.writeAll(" ");
-
-        try writer.print(
-            "| {d: >6.2} {s} | {d: >6.2} {s} - {d: >6.2} {s} | {d: >6.2} {s} - {d: >6.2} {s} ({d})\n",
-            .{ p50_v, p50_s, p25_v, p25_s, p75_v, p75_s, min_v, min_s, max_v, max_s, self.getCount() },
-        );
-    }
-
-    pub fn zonable(self: *const Tally) ?Zonable {
-        if (!self.isValid()) return null;
+    pub fn zonable(self: *const Tally) Zonable {
+        assert(self.isValid());
 
         return .{
-            .min = self.min(),
-            .p25 = self.p25(),
-            .p50 = self.p50(),
-            .p75 = self.p75(),
-            .max = self.max(),
+            .min = self.getMin(),
+            .p50 = self.getP50(),
+            .p90 = self.getP90(),
+            .p99 = self.getP99(),
+            .max = self.getMax(),
         };
     }
 
     pub const Zonable = struct {
         min: f64,
-        p25: f64,
         p50: f64,
-        p75: f64,
+        p90: f64,
+        p99: f64,
         max: f64,
     };
 };
@@ -349,49 +349,36 @@ pub const LazyTally = struct {
         self.tally.?.add(value);
     }
 
-    pub fn min(self: *const @This()) ?f64 {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return null;
-        }
-
-        return self.tally.?.min();
+    pub fn getOutliers(self: *const @This()) f64 {
+        return self.tally.?.getOutliers();
     }
 
-    pub fn p25(self: *const @This()) ?f64 {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return null;
-        }
-
-        return self.tally.?.p25();
+    pub fn getMin(self: *const @This()) f64 {
+        return self.tally.?.getMin();
     }
 
-    pub fn p50(self: *const @This()) ?f64 {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return null;
-        }
-
-        return self.tally.?.p50();
+    pub fn getP50(self: *const @This()) f64 {
+        return self.tally.?.getP50();
     }
 
-    pub fn p75(self: *const @This()) ?f64 {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return null;
-        }
-
-        return self.tally.?.p75();
+    pub fn getP90(self: *const @This()) f64 {
+        return self.tally.?.getP90();
     }
 
-    pub fn max(self: *const @This()) ?f64 {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return null;
-        }
+    pub fn getP99(self: *const @This()) f64 {
+        return self.tally.?.getP99();
+    }
 
-        return self.tally.?.max();
+    pub fn getMax(self: *const @This()) f64 {
+        return self.tally.?.getMax();
+    }
+
+    pub fn getCount(self: *const @This()) usize {
+        return self.tally.?.getCount();
+    }
+
+    pub fn isValid(self: *const @This()) bool {
+        return self.tally.?.isValid();
     }
 
     pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, prefix: []const u8) !void {
