@@ -298,6 +298,8 @@ pub fn runAll(
 
         try logger.startTest(test_info);
 
+        var first_run: ?Run = null;
+
         constrs: for (constrs) |constr_info| {
             if (filter.filterCombination(test_info, constr_info)) continue :constrs;
 
@@ -369,7 +371,12 @@ pub fn runAll(
             }
 
             if (!any_failed) {
-                try logger.runSucess(alloc, &current_run);
+                if (first_run) |fr| {
+                    try logger.runSucess(alloc, &fr, &current_run);
+                } else {
+                    try logger.runSucess(alloc, null, &current_run);
+                    first_run = current_run;
+                }
             }
         }
     }

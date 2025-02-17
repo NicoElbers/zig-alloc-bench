@@ -117,31 +117,44 @@ pub fn startConstr(self: Self, constr_info: ContructorInformation) !void {
 }
 
 fn printPadded(pad: u8, width: u16, file: File, str: []const u8) !void {
+    const writer = file.writer();
+
     // Always have 2 padding, looks nicer
     const pad_count = (width -| 6) -| str.len + 4;
     const pad_side = @divFloor(pad_count, 2);
 
-    for (0..pad_side) |_| try file.writeAll(&.{pad});
+    const color = std.io.tty.detectConfig(file);
+
+    try color.setColor(writer, .bold);
+    try writer.writeByteNTimes(pad, pad_side);
     try file.writeAll(" ");
     try file.writeAll(str);
     try file.writeAll(" ");
-    for (0..pad_side) |_| try file.writeAll(&.{pad});
+    try writer.writeByteNTimes(pad, pad_side);
     try file.writeAll("\n");
+    try color.setColor(writer, .reset);
 }
 
 pub fn runFail(self: *Self, ret: StatsRet, reason: []const u8, code: u32) !void {
     self.fail_count += 1;
 
     const stderr = std.io.getStdErr();
+    const writer = stderr.writer();
 
     try dumpFile("stdout", ret.stdout, stderr);
     try dumpFile("stderr", ret.stderr, stderr);
     try dumpFile("Error", ret.err_pipe, stderr);
 
-    try stderr.writer().print("Failed due to {s} ({d})\n", .{ reason, code });
+    const color = std.io.tty.detectConfig(stderr);
+    try color.setColor(writer, .red);
+    try writer.print("Failed due to {s} ({d})\n", .{ reason, code });
+    try color.setColor(writer, .reset);
 }
 
 fn dumpFile(file_name: []const u8, read: File, write: File) !void {
+    const color = std.io.tty.detectConfig(write);
+    const writer = write.writer();
+
     var buf: [1024]u8 = undefined;
 
     var written_anything = false;
@@ -154,22 +167,149 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
         defer written_anything = true;
 
         if (!written_anything) {
-            try write.writer().print("----- {s} ----\n", .{file_name});
+            try color.setColor(writer, .bold);
+            try writer.print("----- {s} ----\n", .{file_name});
+            try color.setColor(writer, .reset);
         }
 
-        try write.writeAll(buf[0..amt]);
+        try writer.writeAll(buf[0..amt]);
     }
 
     if (written_anything) {
-        try write.writer().print("----- {s} ----\n\n", .{file_name});
+        try color.setColor(writer, .bold);
+        try writer.print("----- {s} ----\n\n", .{file_name});
+        try color.setColor(writer, .reset);
     }
 }
 
-pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
+const Order = enum { higher_better, lower_better };
+fn resultTally(
+    file: File,
+    comptime name: []const u8,
+    order: Order,
+    unit: Unit,
+    tally: anytype,
+    first_tally: @TypeOf(tally),
+) !void {
+    switch (@TypeOf(tally)) {
+        Tally => {},
+        statistics.LazyTally => if (tally.tally == null) return,
+        statistics.FallableTally => {
+            try resultTally(file, name ++ " success", order, unit, tally.success, first_tally.success);
+            try resultTally(file, name ++ " failure", order, unit, tally.failure, first_tally.failure);
+            return;
+        },
+        else => @compileLog("no"),
+    }
+
+    const color = std.io.tty.detectConfig(file);
+
+    const writer = file.writer();
+
+    const cli = struct {
+        pub fn prefix(val: f64) []const u8 {
+            return if (val > 0) "+" else if (val == 0) " " else "-";
+        }
+
+        pub fn percentClr(ord: Order, percent: f64) std.io.tty.Color {
+            return if (percent > 1)
+                switch (ord) {
+                    .higher_better => .bright_green,
+                    .lower_better => .bright_red,
+                }
+            else if (percent < -1)
+                switch (ord) {
+                    .higher_better => .bright_red,
+                    .lower_better => .bright_green,
+                }
+            else
+                .dim;
+        }
+    };
+
+    const outliers = tally.getOutliers();
+
+    try color.setColor(writer, .bold);
+    try writer.writeAll("\n" ++ name ++ ": ");
+    try color.setColor(writer, .reset);
+
+    if (outliers > 10) {
+        try color.setColor(writer, .bright_yellow);
+    } else {
+        try color.setColor(writer, .dim);
+    }
+    try writer.print("({d:.2} outliers)\n", .{tally.getOutliers()});
+    try color.setColor(writer, .reset);
+
+    const min_t = tally.getMin();
+    const p50_t = tally.getP50();
+    const p90_t = tally.getP90();
+    const p99_t = tally.getP99();
+    const max_t = tally.getMax();
+
+    const min_f = first_tally.getMin();
+    const p50_f = first_tally.getP50();
+    const p90_f = first_tally.getP90();
+    const p99_f = first_tally.getP99();
+    const max_f = first_tally.getMax();
+
+    inline for (.{
+        .{ "min", min_f, min_t },
+        .{ "p50", p50_f, p50_t },
+        .{ "p90", p90_f, p90_t },
+        .{ "p99", p99_f, p99_t },
+        .{ "max", max_f, max_t },
+    }) |tuple| {
+        const section_name, const first, const current = tuple;
+
+        try writer.writeAll("  ");
+
+        try writer.writeAll(section_name);
+        try color.setColor(writer, .reset);
+
+        const name_space = 4 - section_name.len;
+        try writer.writeByteNTimes(' ', name_space);
+        try writer.writeAll(": ");
+
+        {
+            const value, const suffix = unit.convert(current);
+
+            try color.setColor(writer, .green);
+            try writer.print("{d: >6.2} ", .{value});
+            try color.setColor(writer, .reset);
+            try color.setColor(writer, .dim);
+            try writer.writeAll(&suffix);
+            try color.setColor(writer, .reset);
+            try writer.writeAll(" ");
+        }
+
+        try writer.writeByteNTimes(' ', 5);
+
+        {
+            const percent = ((current - first) / first) * 100;
+            const value, const suffix = Unit.percent.convert(@abs(percent));
+
+            try color.setColor(writer, cli.percentClr(order, percent));
+            try writer.writeAll(cli.prefix(percent));
+            try writer.print("{d: >6.2} ", .{value});
+            try writer.writeAll(&suffix);
+            try color.setColor(writer, .reset);
+            try writer.writeAll(" ");
+        }
+
+        try writer.writeAll("\n");
+    }
+}
+
+pub fn runSucess(self: *Self, alloc: Allocator, first_run: ?*const Run, run_info: *const Run) !void {
     const stdout = std.io.getStdOut();
+    const color = std.io.tty.detectConfig(stdout);
+    const writer = stdout.writer();
 
     if (self.opts.type == .testing) {
-        try stdout.writeAll("Run Sucess\n");
+        try color.setColor(writer, .green);
+        try writer.writeAll("Run Sucess\n");
+        try color.setColor(writer, .reset);
         return;
     }
 
@@ -178,54 +318,30 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
 
     if (!self.opts.cli) return;
 
-    const padding = 22;
-
-    // FIXME: Ugly as all hell but it works for now
-
-    // zig fmt: off
-
-    // try statistics.Unit.counter.write(stdout , "Runs                   ", @floatFromInt(run_info.runs));
-    // try statistics.Unit.time.write(stdout    , "Time                   ", run_info.time.p50());
-    // try statistics.Unit.memory.write(stdout  , "Max rss                ", run_info.max_rss.p50());
-    // try statistics.Unit.percent.write(stdout , "Cache misses           ", run_info.cache_miss_percent.p50());
-
     const run_v, const runs_s = statistics.Unit.counter.convert(@floatFromInt(run_info.runs));
 
-    try stdout.writer().print("Runs: {d:.2} {s}\n", .{run_v, runs_s});
-    try stdout.writeAll("----------------------+------------+-------------------------+------------------------\n");
-    try stdout.writeAll("  Type                |    p50     |    p25     -     p75    |   min      -     max   \n");
-    try stdout.writeAll("======================+============+=========================+========================\n");
-
-    try run_info.time.write(stdout, .time, padding,            "- Time");
-    try run_info.max_rss.write(stdout, .memory, padding,       "- Max rss");
-    try run_info.cache_misses.write(stdout, .percent, padding, "- Cache misse");
-
+    try color.setColor(writer, .dim);
+    try stdout.writer().print("Runs: {d:.2} {s}\n", .{ run_v, runs_s });
+    try color.setColor(writer, .reset);
 
     const profiling = run_info.profiling;
+    const first_time = if (first_run) |fr| fr.time else run_info.time;
+    const first_max_rss = if (first_run) |fr| fr.max_rss else run_info.max_rss;
+    const first_cache_misses = if (first_run) |fr| fr.cache_misses else run_info.cache_misses;
 
-    try profiling.allocations.write(stdout, .time, padding,    "- Allocation");
-    try profiling.resizes.write(stdout, .time, padding,        "- Resize");
-    try profiling.remaps.write(stdout, .time, padding,         "- Remap");
-    try profiling.frees.write(stdout, .time, padding,          "- Free");
-    // zig fmt: on
+    const first_allocations = if (first_run) |fr| fr.profiling.allocations else profiling.allocations;
+    const first_remaps = if (first_run) |fr| fr.profiling.remaps else profiling.remaps;
+    const first_resizes = if (first_run) |fr| fr.profiling.resizes else profiling.resizes;
+    const first_frees = if (first_run) |fr| fr.profiling.frees else profiling.frees;
 
-    // if (profiling.allocations.success.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Successful allocations ", v);
-    // if (profiling.allocations.failure.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Failed allocations     ", v);
-    //
-    // if (profiling.resizes.success.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Sucessful resizes      ", v);
-    // if (profiling.resizes.failure.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Failed resizes         ", v);
-    //
-    // if (profiling.remaps.success.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Sucessful remaps       ", v);
-    // if (profiling.remaps.failure.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Failed remaps          ", v);
-    //
-    // if (profiling.frees.p50()) |v|
-    //     try statistics.Unit.time.write(stdout, "Frees                  ", v);
+    try resultTally(stdout, "Time", .lower_better, .time, run_info.time, first_time);
+    try resultTally(stdout, "Max rss", .lower_better, .memory, run_info.max_rss, first_max_rss);
+    try resultTally(stdout, "Cache misses", .lower_better, .percent, run_info.cache_misses, first_cache_misses);
+
+    try resultTally(stdout, "Allocations", .lower_better, .time, profiling.allocations, first_allocations);
+    try resultTally(stdout, "Remaps", .lower_better, .time, profiling.remaps, first_remaps);
+    try resultTally(stdout, "Resizes", .lower_better, .time, profiling.resizes, first_resizes);
+    try resultTally(stdout, "Frees", .lower_better, .time, profiling.frees, first_frees);
 }
 
 fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {
@@ -293,3 +409,5 @@ const ContructorInformation = runner.ContructorInformation;
 const StatsRet = runner.StatsRet;
 const File = std.fs.File;
 const Run = statistics.Run;
+const Tally = statistics.Tally;
+const Unit = statistics.Unit;
