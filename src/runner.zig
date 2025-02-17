@@ -1,4 +1,44 @@
-pub const TestFn = *const fn (Allocator) anyerror!void;
+pub const TestFn = *const fn (Allocator, TestArg.ArgInt) anyerror!void;
+
+pub const TestArg = union(enum) {
+    pub const ArgInt = u64;
+
+    /// The test is provided no argument.
+    none,
+
+    /// The test is provided all elements in the list one at a time.
+    list: []const ArgInt,
+
+    /// The test is provided all elements in the exclusive range
+    /// [start..start + n) one at a time.
+    linear: struct { start: ArgInt, n: ArgInt },
+
+    /// The test is provided all elements in the sequence
+    /// [start * 2^0, start * 2^1 ... start * 2^n) one at a time.
+    exponential: struct { start: ArgInt, n: std.math.Log2Int(ArgInt) },
+
+    pub fn iter(self: TestArg) Iter {
+        return .{ .type = self };
+    }
+
+    pub const Iter = struct {
+        type: TestArg,
+        n: ArgInt = 0,
+
+        pub fn next(self: *@This()) ?ArgInt {
+            defer self.n += 1;
+            return switch (self.type) {
+                .none => if (self.n == 0) @as(ArgInt, undefined) else null,
+
+                .list => |t| if (self.n < t.len) t[self.n] else null,
+
+                .linear => |t| if (self.n < t.n) t.start + t.n else null,
+
+                .exponential => |t| if (self.n < t.n) t.start + 1 << t.n else null,
+            };
+        }
+    };
+};
 
 pub const TestCharacteristics = struct {
     leaks: bool = false,
@@ -42,20 +82,24 @@ pub const TestCharacteristics = struct {
 
 pub const TestInformation = struct {
     name: []const u8,
+    test_fn: TestFn,
+
     description: ?[]const u8 = null,
     charactaristics: TestCharacteristics = .default,
     timeout_ns: ?u64 = null,
-    test_fn: TestFn,
+    arg: TestArg = .none,
 
     pub fn zonable(self: @This()) Zonable {
         return .{
             .name = self.name,
+            .test_arg = self.arg,
             .characteristics = self.charactaristics.zonable(),
         };
     }
 
     pub const Zonable = struct {
         name: []const u8,
+        arg: TestArg,
         characteristics: TestCharacteristics.Zonable,
     };
 };
@@ -88,21 +132,39 @@ pub const ContructorInformation = struct {
 
 pub const TestOpts = struct {
     type: Opts.Type,
-    test_fn: TestFn,
+
+    // TODO: I don't really like nullables in here
+    arg: TestArg.ArgInt,
     timeout_ns: ?u64 = null,
+
     tty: std.io.tty.Config,
+    test_fn: TestFn,
     profiling: *Profiling,
+
+    pub fn zonable(self: *const @This()) Zonable {
+        return .{
+            .type = self.type,
+            .timeout_ns = self.timeout_ns,
+            .arg = self.arg,
+        };
+    }
+
+    pub const Zonable = struct {
+        type: Opts.Type,
+        timeout_ns: ?u64,
+        arg: ?usize,
+    };
 };
 
 pub const Profiling = statistics.Profiling;
 
 pub fn run(alloc: Allocator, opts: TestOpts) !void {
     return switch (opts.type) {
-        .testing, .benchmarking => try opts.test_fn(alloc),
+        .testing, .benchmarking => try opts.test_fn(alloc, opts.arg),
         .profiling => {
             var profiler = ProfilingAllocator.init(alloc, opts.profiling);
 
-            try opts.test_fn(profiler.allocator());
+            try opts.test_fn(profiler.allocator(), opts.arg);
         },
     };
 }
@@ -295,20 +357,25 @@ pub fn runAll(
         tests: for (tests) |test_info| {
             if (filter.filterTest(test_info)) continue :tests;
 
-            constrs: for (constrs) |constr_info| {
-                if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+            var iter = test_info.arg.iter();
 
-                var current_run: Run = .init(test_info, constr_info);
+            while (iter.next()) |arg| {
+                constrs: for (constrs) |constr_info| {
+                    if (filter.filterCombination(test_info, constr_info)) continue :constrs;
 
-                const test_opts: TestOpts = .{
-                    .type = opts.type,
-                    .test_fn = test_info.test_fn,
-                    .timeout_ns = test_info.timeout_ns,
-                    .tty = opts.tty,
-                    .profiling = &current_run.profiling,
-                };
+                    var prof: Profiling = .init;
 
-                try constr_info.constr_fn(test_opts);
+                    const test_opts: TestOpts = .{
+                        .type = opts.type,
+                        .test_fn = test_info.test_fn,
+                        .timeout_ns = test_info.timeout_ns,
+                        .tty = opts.tty,
+                        .profiling = &prof,
+                        .arg = arg,
+                    };
+
+                    try constr_info.constr_fn(test_opts);
+                }
             }
         }
         return;
@@ -319,102 +386,133 @@ pub fn runAll(
 
         try logger.startTest(test_info);
 
-        var first_run: ?Run = null;
+        var iter = test_info.arg.iter();
 
-        constrs: for (constrs) |constr_info| {
-            if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+        while (iter.next()) |arg| {
+            try logger.startArgument(test_info.arg, arg);
 
-            try logger.startConstr(constr_info);
+            var first: ?struct {
+                run: Run,
+                prof: Profiling,
+            } = null;
 
-            var current_run: Run = .init(test_info, constr_info);
+            constrs: for (constrs) |constr_info| {
+                if (filter.filterCombination(test_info, constr_info)) continue :constrs;
 
-            const test_opts: TestOpts = .{
-                .type = opts.type,
-                .test_fn = test_info.test_fn,
-                .timeout_ns = test_info.timeout_ns,
-                .tty = opts.tty,
-                .profiling = &current_run.profiling,
-            };
+                try logger.startConstr(constr_info);
 
-            const runtime: u64 = if (opts.type == .testing)
-                0
-            else
-                opts.min_runtime_ns;
+                var current_run: Run = .init;
 
-            var ran_once = false;
-            var any_failed = false;
-            var timer = std.time.Timer.start() catch unreachable;
-            while (timer.read() < runtime or !ran_once) {
-                defer ran_once = true;
+                var prof: Profiling = if (opts.type == .profiling) .init else undefined;
 
-                const ret: StatsRet = try runOnce(alloc, constr_info.constr_fn, test_opts);
-                defer ret.deinit();
+                const test_opts: TestOpts = .{
+                    .type = opts.type,
+                    .test_fn = test_info.test_fn,
+                    .timeout_ns = test_info.timeout_ns,
+                    .tty = opts.tty,
+                    .arg = arg,
+                    .profiling = &prof,
+                };
 
-                switch (ret.term) {
-                    inline else => |v, t| {
-                        if (test_info.charactaristics.failing) |f|
-                            switch (f) {
-                                .any_failure => {},
-                                .term => |term| if (term != t or @field(term, @tagName(t)) != v) {
-                                    try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
-                                    if (opts.type != .testing) return;
-                                    any_failed = true;
-                                    break;
-                                },
-                            }
-                        else {
-                            try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
-                            if (opts.type != .testing) return;
-                            any_failed = true;
-                            break;
-                        }
-                    },
-                    .Exited => |code| {
-                        const status = StatusCode.codeToStatus(code);
-                        switch (status) {
-                            .success => {
-                                if (test_info.charactaristics.failing) |_| {
-                                    try logger.runFail(ret, "Succeeded failing test", code);
-                                    if (opts.type != .testing) return;
-                                    any_failed = true;
-                                    break;
-                                }
-                            },
-                            inline else => |t| {
-                                if (test_info.charactaristics.failing) |f| switch (f) {
+                // TODO: This feels icky
+                const runtime: u64 = if (opts.type == .testing)
+                    0
+                else
+                    opts.min_runtime_ns;
+
+                // TODO: This should be in option for the test
+                var ran_once = false;
+                var any_failed = false;
+                var timer = std.time.Timer.start() catch unreachable;
+                while (timer.read() < runtime or !ran_once) {
+                    defer ran_once = true;
+
+                    const ret: StatsRet = try runOnce(alloc, constr_info.constr_fn, test_opts);
+                    defer ret.deinit();
+
+                    switch (ret.term) {
+                        inline else => |v, t| {
+                            if (test_info.charactaristics.failing) |f|
+                                switch (f) {
                                     .any_failure => {},
-                                    .term => |term| if (term != .Exited or term.Exited != code) {
-                                        try logger.runFail(ret, "Incorrect failure exited", code);
+                                    .term => |term| if (term != t or @field(term, @tagName(t)) != v) {
+                                        try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
                                         if (opts.type != .testing) return;
                                         any_failed = true;
                                         break;
                                     },
-                                } else {
-                                    try logger.runFail(ret, @tagName(t), code);
-                                    if (opts.type != .testing) return;
-                                    any_failed = true;
-                                    break;
                                 }
-                            },
-                        }
-                    },
+                            else {
+                                try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
+                                if (opts.type != .testing) return;
+                                any_failed = true;
+                                break;
+                            }
+                        },
+                        .Exited => |code| {
+                            const status = StatusCode.codeToStatus(code);
+                            switch (status) {
+                                .success => {
+                                    if (test_info.charactaristics.failing) |_| {
+                                        try logger.runFail(ret, "Succeeded failing test", code);
+                                        if (opts.type != .testing) return;
+                                        any_failed = true;
+                                        break;
+                                    }
+                                },
+                                inline else => |t| {
+                                    if (test_info.charactaristics.failing) |f| switch (f) {
+                                        .any_failure => {},
+                                        .term => |term| if (term != .Exited or term.Exited != code) {
+                                            try logger.runFail(ret, "Incorrect failure exited", code);
+                                            if (opts.type != .testing) return;
+                                            any_failed = true;
+                                            break;
+                                        },
+                                    } else {
+                                        try logger.runFail(ret, @tagName(t), code);
+                                        if (opts.type != .testing) return;
+                                        any_failed = true;
+                                        break;
+                                    }
+                                },
+                            }
+                        },
+                    }
+
+                    current_run.runs += 1;
+                    current_run.time.add(@floatFromInt(ret.performance.wall_time));
+                    current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
+                    current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
+                    if (opts.type == .profiling) {
+                        prof = ret.profiling.?;
+                    }
                 }
 
-                current_run.runs += 1;
-                current_run.time.add(@floatFromInt(ret.performance.wall_time));
-                current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
-                current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
-                if (opts.type == .profiling) {
-                    current_run.profiling = ret.profiling.?;
-                }
-            }
-
-            if (!any_failed) {
-                if (first_run) |fr| {
-                    try logger.runSucess(alloc, &fr, &current_run);
-                } else {
-                    try logger.runSucess(alloc, null, &current_run);
-                    first_run = current_run;
+                if (!any_failed) {
+                    if (first) |f| {
+                        try logger.runSucess(
+                            alloc,
+                            f.run,
+                            &f.prof,
+                            current_run,
+                            test_opts,
+                            &prof,
+                        );
+                    } else {
+                        try logger.runSucess(
+                            alloc,
+                            null,
+                            null,
+                            current_run,
+                            test_opts,
+                            &prof,
+                        );
+                        first = .{
+                            .run = current_run,
+                            .prof = prof,
+                        };
+                    }
                 }
             }
         }

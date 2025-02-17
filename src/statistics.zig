@@ -453,42 +453,33 @@ pub const Profiling = struct {
 };
 
 pub const Run = struct {
-    test_info: TestInformation,
-    constr_info: ContructorInformation,
     runs: usize = 0,
     time: Tally = .init,
     max_rss: Tally = .init,
     cache_misses: Tally = .init,
-    profiling: Profiling = .init,
 
-    pub fn zonable(self: *const Run, profiling: bool) Zonable {
+    // FIXME: Create some 'full run' struct that includes profiling, opts everything
+    pub fn zonable(self: *const Run, test_opts: TestOpts, profiling: ?*const Profiling) Zonable {
         return .{
             .runs = self.runs,
-            .test_info = self.test_info.zonable(),
-            .constr_info = self.constr_info.zonable(),
+            .opts = test_opts.zonable(),
             .time = self.time.zonable(),
             .max_rss = self.max_rss.zonable(),
             .cache_miss_percent = self.cache_misses.zonable(),
-            .profiling = if (profiling) self.profiling.zonable() else null,
+            .profiling = if (profiling) |p| p.zonable() else null,
         };
     }
 
     pub const Zonable = struct {
         runs: usize,
-        test_info: TestInformation.Zonable,
-        constr_info: ContructorInformation.Zonable,
+        opts: TestOpts.Zonable,
         time: Tally.Zonable,
         max_rss: Tally.Zonable,
         cache_miss_percent: Tally.Zonable,
         profiling: ?Profiling.Zonable,
     };
 
-    pub fn init(test_info: TestInformation, constr_info: ContructorInformation) Run {
-        return .{
-            .test_info = test_info,
-            .constr_info = constr_info,
-        };
-    }
+    pub const init: Run = .{};
 };
 
 const std = @import("std");
@@ -496,6 +487,7 @@ const runner = @import("runner.zig");
 
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
+const TestOpts = runner.TestOpts;
 
 const File = std.fs.File;
 

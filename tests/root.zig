@@ -2,6 +2,7 @@ pub const default = [_]TestInformation{
     .{
         .name = "Simple allocation",
         .test_fn = &simpleTest,
+        .arg = .{ .list = &.{ 1, 2, 3 } },
     },
     .{
         .name = "Many allocations and frees",
@@ -75,19 +76,19 @@ pub const default = [_]TestInformation{
     },
 };
 
-fn simpleTest(alloc: Allocator) !void {
+fn simpleTest(alloc: Allocator, _: ArgInt) !void {
     const a = try alloc.alloc(u8, 1000);
     defer alloc.free(a);
 }
 
-fn manyAllocFree(alloc: Allocator) !void {
+fn manyAllocFree(alloc: Allocator, _: ArgInt) !void {
     for (0..10_000) |_| {
         const arr = try alloc.alloc(u32, 100);
         alloc.free(arr);
     }
 }
 
-fn manyAllocResizeFree(alloc: Allocator) !void {
+fn manyAllocResizeFree(alloc: Allocator, _: ArgInt) !void {
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();
 
@@ -101,7 +102,7 @@ fn manyAllocResizeFree(alloc: Allocator) !void {
     }
 }
 
-fn manyAllocRemapsFree(alloc: Allocator) !void {
+fn manyAllocRemapsFree(alloc: Allocator, _: ArgInt) !void {
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();
 
@@ -129,7 +130,7 @@ fn manyAllocRemapsFree(alloc: Allocator) !void {
     }
 }
 
-fn appendingToArrayList(alloc: Allocator) !void {
+fn appendingToArrayList(alloc: Allocator, _: ArgInt) !void {
     var arr = std.ArrayListUnmanaged(u64).empty;
     defer arr.deinit(alloc);
 
@@ -141,7 +142,7 @@ fn appendingToArrayList(alloc: Allocator) !void {
     }
 }
 
-fn appendingToMultipleArrayLists(alloc: Allocator) !void {
+fn appendingToMultipleArrayLists(alloc: Allocator, _: ArgInt) !void {
     var arrs: [10]std.ArrayListUnmanaged(u64) = @splat(.empty);
     defer for (&arrs) |*arr| arr.deinit(alloc);
 
@@ -154,7 +155,7 @@ fn appendingToMultipleArrayLists(alloc: Allocator) !void {
     }
 }
 
-fn appendAccessArray(alloc: Allocator) !void {
+fn appendAccessArray(alloc: Allocator, _: ArgInt) !void {
     const Action = enum { append, access };
 
     var arr: std.ArrayListUnmanaged(u64) = .empty;
@@ -176,12 +177,12 @@ fn appendAccessArray(alloc: Allocator) !void {
     }
 }
 
-fn oomTest(alloc: Allocator) !void {
+fn oomTest(alloc: Allocator, _: ArgInt) !void {
     const buf = try alloc.alloc(u8, std.math.maxInt(usize) / 2);
     alloc.free(buf);
 }
 
-fn noFree(alloc: Allocator) !void {
+fn noFree(alloc: Allocator, _: ArgInt) !void {
     _ = try alloc.alloc(u64, 64);
     _ = try alloc.alloc(u64, 64);
     _ = try alloc.alloc(u64, 64);
@@ -189,13 +190,13 @@ fn noFree(alloc: Allocator) !void {
     _ = try alloc.alloc(u64, 64);
 }
 
-fn doubleFree(alloc: Allocator) !void {
+fn doubleFree(alloc: Allocator, _: ArgInt) !void {
     const ptr = try alloc.create(u8);
     alloc.destroy(ptr);
     alloc.destroy(ptr);
 }
 
-fn failingTest(alloc: Allocator) !void {
+fn failingTest(alloc: Allocator, _: ArgInt) !void {
     _ = alloc;
     return error.Fail;
 }
@@ -209,7 +210,7 @@ const Types = [_]type{
     usize,         *u8,
 };
 
-fn alignment(alloc: Allocator) !void {
+fn alignment(alloc: Allocator, _: ArgInt) !void {
     inline for (Types) |T| {
         var ptrs: [repetitions]*T = undefined;
 
@@ -253,7 +254,7 @@ const Alignments = [_]std.mem.Alignment{
     @enumFromInt(std.math.log2_int(u29, 1 << 29 - 1)),
 };
 
-fn alignedAllocs(alloc: Allocator) !void {
+fn alignedAllocs(alloc: Allocator, _: ArgInt) !void {
     inline for (Types) |T| {
         inline for (Alignments) |alignm| {
             var ptrs: [repetitions][]align(alignm.toByteUnits()) T = undefined;
@@ -276,3 +277,4 @@ const std = @import("std");
 const runner = @import("runner");
 const Allocator = std.mem.Allocator;
 const TestInformation = runner.TestInformation;
+const ArgInt = runner.TestArg.ArgInt;

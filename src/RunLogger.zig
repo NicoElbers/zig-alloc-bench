@@ -17,7 +17,7 @@ pub const Output = struct {
     }
 };
 
-pub const Zon = struct {
+pub const Zonable = struct {
     build: Build = .{},
     runs: []const Run.Zonable = &.{},
 
@@ -29,7 +29,7 @@ pub const Zon = struct {
     };
 };
 
-pub fn zonable(self: Self) Zon {
+pub fn zonable(self: *const Self) Zonable {
     return .{
         .build = .{},
         .runs = self.runs.items,
@@ -105,6 +105,34 @@ pub fn startTest(self: Self, test_info: TestInformation) !void {
     try stdout.writeAll("\n");
     try stdout.writeAll("\n");
     try printPadded('=', 50, stdout, test_info.name);
+}
+
+pub fn startArgument(self: Self, typ: TestArg, arg: TestArg.ArgInt) !void {
+    if (!self.opts.cli) return;
+    if (typ == .none) return;
+
+    const stdout = std.io.getStdOut();
+    const writer = stdout.writer();
+    const color = std.io.tty.detectConfig(stdout);
+
+    try writer.writeAll("\n");
+    try color.setColor(writer, .dim);
+    try writer.writeByteNTimes('-', 15);
+    try writer.writeAll("\n");
+
+    try writer.writeByteNTimes(' ', 3);
+    try writer.writeAll(@tagName(typ));
+    try writer.writeAll(": ");
+    try color.setColor(writer, .reset);
+    try color.setColor(writer, .cyan);
+    try writer.print("{d}", .{arg});
+    try color.setColor(writer, .reset);
+    try writer.writeAll("\n");
+
+    try color.setColor(writer, .dim);
+    try writer.writeByteNTimes('-', 15);
+    try writer.writeAll("\n");
+    try color.setColor(writer, .reset);
 }
 
 pub fn startConstr(self: Self, constr_info: ContructorInformation) !void {
@@ -301,7 +329,15 @@ fn resultTally(
     }
 }
 
-pub fn runSucess(self: *Self, alloc: Allocator, first_run: ?*const Run, run_info: *const Run) !void {
+pub fn runSucess(
+    self: *Self,
+    alloc: Allocator,
+    first_run: ?Run,
+    first_prof: ?*const Profiling,
+    run_info: Run,
+    test_opts: TestOpts,
+    prof: *const Profiling,
+) !void {
     const stdout = std.io.getStdOut();
     const color = std.io.tty.detectConfig(stdout);
     const writer = stdout.writer();
@@ -314,7 +350,7 @@ pub fn runSucess(self: *Self, alloc: Allocator, first_run: ?*const Run, run_info
     }
 
     // update file _first_ to reduce the risk of losing a run
-    if (self.opts.disk) try updateFile(self, alloc, run_info);
+    if (self.opts.disk) try updateFile(self, alloc, run_info, test_opts, prof);
 
     if (!self.opts.cli) return;
 
@@ -324,28 +360,35 @@ pub fn runSucess(self: *Self, alloc: Allocator, first_run: ?*const Run, run_info
     try stdout.writer().print("Runs: {d:.2} {s}\n", .{ run_v, runs_s });
     try color.setColor(writer, .reset);
 
-    const profiling = run_info.profiling;
     const first_time = if (first_run) |fr| fr.time else run_info.time;
     const first_max_rss = if (first_run) |fr| fr.max_rss else run_info.max_rss;
     const first_cache_misses = if (first_run) |fr| fr.cache_misses else run_info.cache_misses;
-
-    const first_allocations = if (first_run) |fr| fr.profiling.allocations else profiling.allocations;
-    const first_remaps = if (first_run) |fr| fr.profiling.remaps else profiling.remaps;
-    const first_resizes = if (first_run) |fr| fr.profiling.resizes else profiling.resizes;
-    const first_frees = if (first_run) |fr| fr.profiling.frees else profiling.frees;
 
     try resultTally(stdout, "Time", .lower_better, .time, run_info.time, first_time);
     try resultTally(stdout, "Max rss", .lower_better, .memory, run_info.max_rss, first_max_rss);
     try resultTally(stdout, "Cache misses", .lower_better, .percent, run_info.cache_misses, first_cache_misses);
 
-    try resultTally(stdout, "Allocations", .lower_better, .time, profiling.allocations, first_allocations);
-    try resultTally(stdout, "Remaps", .lower_better, .time, profiling.remaps, first_remaps);
-    try resultTally(stdout, "Resizes", .lower_better, .time, profiling.resizes, first_resizes);
-    try resultTally(stdout, "Frees", .lower_better, .time, profiling.frees, first_frees);
+    if (self.opts.type == .profiling) {
+        const first_allocations = if (first_prof) |fp| fp.allocations else prof.allocations;
+        const first_remaps = if (first_prof) |fp| fp.remaps else prof.remaps;
+        const first_resizes = if (first_prof) |fp| fp.resizes else prof.resizes;
+        const first_frees = if (first_prof) |fp| fp.frees else prof.frees;
+
+        try resultTally(stdout, "Allocations", .lower_better, .time, prof.allocations, first_allocations);
+        try resultTally(stdout, "Remaps", .lower_better, .time, prof.remaps, first_remaps);
+        try resultTally(stdout, "Resizes", .lower_better, .time, prof.resizes, first_resizes);
+        try resultTally(stdout, "Frees", .lower_better, .time, prof.frees, first_frees);
+    }
 }
 
-fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {
-    try self.runs.append(alloc, run_info.zonable(self.opts.type == .profiling));
+fn updateFile(
+    self: *Self,
+    alloc: Allocator,
+    run_info: Run,
+    test_opts: TestOpts,
+    prof: *const Profiling,
+) !void {
+    try self.runs.append(alloc, run_info.zonable(test_opts, prof));
 
     if (self.output) |*out| {
         const path = try out.incrementName(alloc);
@@ -407,6 +450,9 @@ const RunOpts = runner.Opts;
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const StatsRet = runner.StatsRet;
+const TestArg = runner.TestArg;
+const Profiling = runner.Profiling;
+const TestOpts = runner.TestOpts;
 const File = std.fs.File;
 const Run = statistics.Run;
 const Tally = statistics.Tally;
