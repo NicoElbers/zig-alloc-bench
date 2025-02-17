@@ -187,8 +187,13 @@ pub const Unit = enum {
         var suffix: [3]u8 = @splat(' ');
         const val = blk: switch (unit) {
             .percent => {
-                suffix[0] = '%';
-                break :blk value;
+                if (@abs(value) < 200) {
+                    suffix[0] = '%';
+                    break :blk value;
+                } else {
+                    suffix[0] = 'x';
+                    break :blk value / 100;
+                }
             },
             .count, .counter => {
                 var limit: f64 = 1;
