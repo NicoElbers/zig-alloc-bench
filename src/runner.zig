@@ -25,6 +25,18 @@ pub const TestInformation = struct {
     charactaristics: TestCharacteristics = .default,
     timeout_ns: ?u64 = null,
     test_fn: TestFn,
+
+    pub fn zonable(self: @This()) Zonable {
+        return .{
+            .name = self.name,
+            .characteristics = self.charactaristics,
+        };
+    }
+
+    pub const Zonable = struct {
+        name: []const u8,
+        characteristics: TestCharacteristics,
+    };
 };
 
 pub const ConstrFn = *const fn (TestOpts) anyerror!void;
@@ -39,6 +51,18 @@ pub const ContructorInformation = struct {
     description: ?[]const u8 = null,
     characteristics: AllocatorCharacteristics,
     constr_fn: ConstrFn,
+
+    pub fn zonable(self: @This()) Zonable {
+        return .{
+            .name = self.name,
+            .characteristics = self.characteristics,
+        };
+    }
+
+    pub const Zonable = struct {
+        name: []const u8,
+        characteristics: AllocatorCharacteristics,
+    };
 };
 
 pub const TestOpts = struct {
@@ -253,7 +277,7 @@ pub fn runAll(
             constrs: for (constrs) |constr_info| {
                 if (filter.filterCombination(test_info, constr_info)) continue :constrs;
 
-                var current_run: Run = .init;
+                var current_run: Run = .init(test_info, constr_info);
 
                 const test_opts: TestOpts = .{
                     .type = opts.type,
@@ -279,7 +303,7 @@ pub fn runAll(
 
             try logger.startConstr(constr_info);
 
-            var current_run: Run = .init;
+            var current_run: Run = .init(test_info, constr_info);
 
             const test_opts: TestOpts = .{
                 .type = opts.type,

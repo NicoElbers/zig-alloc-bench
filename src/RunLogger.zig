@@ -229,7 +229,7 @@ pub fn runSucess(self: *Self, alloc: Allocator, run_info: *const Run) !void {
 }
 
 fn updateFile(self: *Self, alloc: Allocator, run_info: *const Run) !void {
-    try self.runs.append(alloc, run_info.zonable());
+    try self.runs.append(alloc, run_info.zonable(self.opts.type == .profiling));
 
     if (self.output) |*out| {
         const path = try out.incrementName(alloc);
