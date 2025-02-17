@@ -12,11 +12,32 @@ pub const TestCharacteristics = struct {
     meta: bool = false,
 
     /// A failing test is supposed to emit some error
-    failing: bool = false,
+    failing: ?Failure = null,
 
     testing: bool = false,
 
     pub const default: TestCharacteristics = .{};
+
+    pub const Failure = union(enum) {
+        any_failure,
+        term: process.Term,
+    };
+
+    pub fn zonable(self: TestCharacteristics) Zonable {
+        return .{
+            .multithreaded = self.multithreaded,
+            .long_running = self.long_running,
+            .flaky = self.flaky,
+            .failing = self.failing,
+        };
+    }
+
+    pub const Zonable = struct {
+        multithreaded: bool,
+        long_running: bool,
+        flaky: bool,
+        failing: ?Failure,
+    };
 };
 
 pub const TestInformation = struct {
@@ -29,13 +50,13 @@ pub const TestInformation = struct {
     pub fn zonable(self: @This()) Zonable {
         return .{
             .name = self.name,
-            .characteristics = self.charactaristics,
+            .characteristics = self.charactaristics.zonable(),
         };
     }
 
     pub const Zonable = struct {
         name: []const u8,
-        characteristics: TestCharacteristics,
+        characteristics: TestCharacteristics.Zonable,
     };
 };
 
@@ -315,7 +336,7 @@ pub fn runAll(
                 .profiling = &current_run.profiling,
             };
 
-            const runtime: u64 = if (opts.type == .testing or test_info.charactaristics.failing)
+            const runtime: u64 = if (opts.type == .testing)
                 0
             else
                 opts.min_runtime_ns;
@@ -331,7 +352,17 @@ pub fn runAll(
 
                 switch (ret.term) {
                     inline else => |v, t| {
-                        if (!test_info.charactaristics.failing) {
+                        if (test_info.charactaristics.failing) |f|
+                            switch (f) {
+                                .any_failure => {},
+                                .term => |term| if (term != t or @field(term, @tagName(t)) != v) {
+                                    try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
+                                    if (opts.type != .testing) return;
+                                    any_failed = true;
+                                    break;
+                                },
+                            }
+                        else {
                             try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
                             if (opts.type != .testing) return;
                             any_failed = true;
@@ -342,7 +373,7 @@ pub fn runAll(
                         const status = StatusCode.codeToStatus(code);
                         switch (status) {
                             .success => {
-                                if (test_info.charactaristics.failing) {
+                                if (test_info.charactaristics.failing) |_| {
                                     try logger.runFail(ret, "Succeeded failing test", code);
                                     if (opts.type != .testing) return;
                                     any_failed = true;
@@ -350,7 +381,15 @@ pub fn runAll(
                                 }
                             },
                             inline else => |t| {
-                                if (!test_info.charactaristics.failing) {
+                                if (test_info.charactaristics.failing) |f| switch (f) {
+                                    .any_failure => {},
+                                    .term => |term| if (term != .Exited or term.Exited != code) {
+                                        try logger.runFail(ret, "Incorrect failure exited", code);
+                                        if (opts.type != .testing) return;
+                                        any_failed = true;
+                                        break;
+                                    },
+                                } else {
                                     try logger.runFail(ret, @tagName(t), code);
                                     if (opts.type != .testing) return;
                                     any_failed = true;
