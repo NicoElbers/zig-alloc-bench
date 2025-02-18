@@ -133,7 +133,6 @@ pub const TestCharacteristics = struct {
             .multithreaded = self.multithreaded,
             .long_running = self.long_running,
             .flaky = self.flaky,
-            .failing = self.failure,
         };
     }
 
@@ -141,7 +140,6 @@ pub const TestCharacteristics = struct {
         multithreaded: bool,
         long_running: bool,
         flaky: bool,
-        failing: ?Failure,
     };
 };
 
@@ -158,14 +156,12 @@ pub const TestInformation = struct {
     pub fn zonable(self: @This()) Zonable {
         return .{
             .name = self.name,
-            .test_arg = self.arg,
             .characteristics = self.charactaristics.zonable(),
         };
     }
 
     pub const Zonable = struct {
         name: []const u8,
-        arg: TestArg,
         characteristics: TestCharacteristics.Zonable,
     };
 };
