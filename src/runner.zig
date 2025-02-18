@@ -302,8 +302,7 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
                 opts.timeout_ns,
             );
 
-            // FIXME: Union
-            if (term != .Exited or term.Exited != 0) {
+            if (term.isFailing()) {
                 return .{
                     .term = term,
                     .stdout = ret.stdout,

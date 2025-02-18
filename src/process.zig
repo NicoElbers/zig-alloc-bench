@@ -280,6 +280,10 @@ pub const Term = union(enum) {
             inline else => |v| v,
         };
     }
+
+    pub fn isFailing(self: Term) bool {
+        return self != .Exited or self.Exited != 0;
+    }
 };
 
 /// Known exit statuses within the project
