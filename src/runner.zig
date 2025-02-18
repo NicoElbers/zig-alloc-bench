@@ -518,6 +518,12 @@ pub fn runAll(
 
                     .failure => |stats| {
                         defer stats.deinit();
+
+                        if (stats.term == .TimedOut) {
+                            try logger.runTimeout();
+                            continue :constrs;
+                        }
+
                         const reason = switch (test_info.charactaristics.failure) {
                             .no_failure => "Failed test",
 

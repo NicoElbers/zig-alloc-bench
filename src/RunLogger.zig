@@ -492,8 +492,22 @@ fn printPadded(pad: u8, width: u16, file: File, str: []const u8) !void {
     try color.setColor(writer, .reset);
 }
 
+pub fn runTimeout(self: *Self) !void {
+    if (!self.opts.cli) return;
+
+    const stderr = std.io.getStdErr();
+    const color = std.io.tty.detectConfig(stderr);
+    const writer = stderr.writer();
+
+    try color.setColor(writer, .yellow);
+    try writer.print("Timeout\n", .{});
+    try color.setColor(writer, .reset);
+}
+
 pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void {
     self.fail_count += 1;
+
+    if (!self.opts.cli) return;
 
     const stderr = std.io.getStdErr();
     const color = std.io.tty.detectConfig(stderr);
