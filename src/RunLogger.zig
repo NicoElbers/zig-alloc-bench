@@ -558,6 +558,18 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
     }
 }
 
+pub fn testSuccess(self: *Self) !void {
+    if (!self.opts.cli) return;
+
+    const stdout = std.io.getStdOut();
+    const color = std.io.tty.detectConfig(stdout);
+    const writer = stdout.writer();
+
+    try color.setColor(writer, .green);
+    try writer.writeAll("Success\n");
+    try color.setColor(writer, .reset);
+}
+
 pub fn runSuccess(
     self: *Self,
     alloc: Allocator,

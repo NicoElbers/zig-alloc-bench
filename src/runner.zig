@@ -170,6 +170,7 @@ pub const ConstrFn = *const fn (TestOpts) anyerror!void;
 
 pub const AllocatorCharacteristics = struct {
     thread_safe: bool = true,
+    safety: bool = false,
 
     pub const default = .{};
 };
@@ -528,11 +529,14 @@ pub fn runAll(
                             .no_failure => "Failed test",
 
                             // TODO: Call run success here somehow
-                            .any_failure => continue :constrs,
-                            .term => |t| if (std.meta.eql(t, stats.term))
-                                continue :constrs
-                            else
-                                "Incorrect error",
+                            .any_failure => {
+                                try logger.testSuccess();
+                                continue :constrs;
+                            },
+                            .term => |t| if (std.meta.eql(t, stats.term)) {
+                                try logger.testSuccess();
+                                continue :constrs;
+                            } else "Incorrect error",
                         };
 
                         try logger.runFail(stats, reason, stats.term.code());
@@ -599,6 +603,8 @@ const Filter = struct {
     pub fn filterCombination(self: Filter, test_info: TestInformation, constr_info: ContructorInformation) bool {
         const test_chars = test_info.charactaristics;
         const constr_chars = constr_info.characteristics;
+
+        if (test_chars.failure != .no_failure and !constr_chars.safety) return true;
 
         // If the test requires multiple threads, but the allocator is single
         // threaded, skip

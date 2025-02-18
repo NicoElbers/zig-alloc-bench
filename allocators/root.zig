@@ -6,7 +6,9 @@ pub const default = [_]ContructorInformation{
     },
     .{
         .name = "Debug allocator",
-        .characteristics = .default,
+        .characteristics = .{
+            .safety = true,
+        },
         .constr_fn = &debugAlloc,
     },
     .{
