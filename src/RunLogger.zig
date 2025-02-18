@@ -107,6 +107,8 @@ pub fn startTest(self: Self, test_info: TestInformation) !void {
     try printPadded('=', 50, stdout, test_info.name);
 }
 
+const test_line_width = 30;
+
 pub fn startArgument(self: Self, typ: TestArg, arg: TestArg.ArgInt) !void {
     if (!self.opts.cli) return;
     if (typ == .none) return;
@@ -115,22 +117,24 @@ pub fn startArgument(self: Self, typ: TestArg, arg: TestArg.ArgInt) !void {
     const writer = stdout.writer();
     const color = std.io.tty.detectConfig(stdout);
 
-    try writer.writeAll("\n");
-    try color.setColor(writer, .dim);
-    try writer.writeByteNTimes('-', 15);
-    try writer.writeAll("\n");
+    const mid_len = std.fmt.count(" {s}: {d} ", .{ @tagName(typ), arg });
+    const pad_sides = (test_line_width - mid_len) / 2;
 
-    try writer.writeByteNTimes(' ', 3);
+    try color.setColor(writer, .dim);
+    try writer.writeAll("\n");
+    try writer.writeByteNTimes('-', pad_sides);
+
+    try writer.writeAll(" ");
     try writer.writeAll(@tagName(typ));
     try writer.writeAll(": ");
     try color.setColor(writer, .reset);
     try color.setColor(writer, .cyan);
     try writer.print("{d}", .{arg});
+    try writer.writeAll(" ");
     try color.setColor(writer, .reset);
-    try writer.writeAll("\n");
 
     try color.setColor(writer, .dim);
-    try writer.writeByteNTimes('-', 15);
+    try writer.writeByteNTimes('-', pad_sides);
     try writer.writeAll("\n");
     try color.setColor(writer, .reset);
 }
@@ -292,12 +296,12 @@ fn resultTally(
     }) |tuple| {
         const section_name, const first, const current = tuple;
 
-        try writer.writeAll("  ");
+        try writer.writeAll(" ");
 
         try writer.writeAll(section_name);
         try color.setColor(writer, .reset);
 
-        const name_space = 4 - section_name.len;
+        const name_space = 3 - section_name.len;
         try writer.writeByteNTimes(' ', name_space);
         try writer.writeAll(": ");
 
@@ -313,7 +317,7 @@ fn resultTally(
             try writer.writeAll(" ");
         }
 
-        try writer.writeByteNTimes(' ', 5);
+        try writer.writeByteNTimes(' ', 2);
 
         {
             const percent = ((current - first) / first) * 100;
