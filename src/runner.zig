@@ -1,107 +1,30 @@
 pub const TestFn = *const fn (Allocator, TestArg.ArgInt) anyerror!void;
 
-pub const TestArg = union(enum) {
-    pub const ArgInt = u64;
+pub const TestOpts = struct {
+    type: Opts.Type,
 
-    /// The test is provided no argument.
-    none,
+    arg: TestArg.ArgInt,
 
-    /// The test is provided all elements in the list one at a time.
-    list: []const ArgInt,
+    // TODO: I don't really this being nullable
+    timeout_ns: ?u64 = null,
 
-    /// The test is provided all elements in the exclusive range
-    /// [start..start + n) one at a time.
-    linear: struct { start: ArgInt = 0, n: ArgInt },
+    tty: std.io.tty.Config,
+    test_fn: TestFn,
+    profiling: ?*Profiling,
 
-    /// The test is provided all elements in the sequence
-    /// [start * 2^0, start * 2^1 ... start * 2^n] one at a time.
-    exponential: struct { start: ArgInt = 1, n: std.math.Log2Int(ArgInt) },
-
-    pub fn iter(self: TestArg) Iter {
-        return .{ .type = self };
+    pub fn zonable(self: *const @This()) Zonable {
+        return .{
+            .type = self.type,
+            .timeout_ns = self.timeout_ns,
+            .arg = self.arg,
+        };
     }
 
-    pub const Iter = struct {
-        type: TestArg,
-        n: ArgInt = 0,
-
-        pub fn next(self: *@This()) ?ArgInt {
-            defer self.n += 1;
-
-            return switch (self.type) {
-                .none => if (self.n == 0) @as(ArgInt, undefined) else null,
-
-                .list => |t| if (self.n < t.len) t[self.n] else null,
-
-                .linear => |t| if (self.n < t.n) t.start + self.n else null,
-
-                .exponential => |t| if (self.n <= t.n)
-                    t.start * (@as(ArgInt, 1) << @intCast(self.n))
-                else
-                    null,
-            };
-        }
+    pub const Zonable = struct {
+        type: Opts.Type,
+        timeout_ns: ?u64,
+        arg: ?usize,
     };
-};
-
-pub const Rerun = struct {
-    run_at_least: usize,
-    run_for_ns: u64,
-
-    pub const once: Rerun = .{
-        .run_at_least = 1,
-        .run_for_ns = 0,
-    };
-
-    pub const default: Rerun = .{
-        .run_at_least = 20,
-        .run_for_ns = std.time.ns_per_s,
-    };
-
-    pub fn run(
-        self: @This(),
-        alloc: Allocator,
-        constr_fn: ConstructorFn,
-        test_opts: TestOpts,
-    ) !union(enum) {
-        success: Run,
-        failure: StatsRet,
-    } {
-        var run_count: usize = 0;
-        var timer = std.time.Timer.start() catch @panic("Must support timers");
-
-        var current_run: Run = .init;
-
-        while (timer.read() < self.run_for_ns or run_count < self.run_at_least) {
-            defer run_count += 1;
-
-            const ret: StatsRet = try runOnce(alloc, constr_fn, test_opts);
-
-            switch (ret.term) {
-                else => return .{ .failure = ret },
-                .Exited => |code| {
-                    const status = StatusCode.codeToStatus(code);
-                    switch (status) {
-                        .success => {},
-                        else => return .{ .failure = ret },
-                    }
-                },
-            }
-
-            defer ret.deinit();
-
-            current_run.runs += 1;
-            current_run.time.add(@floatFromInt(ret.performance.wall_time));
-            current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
-            current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
-
-            if (test_opts.type == .profiling) {
-                test_opts.profiling.?.* = ret.profiling.?;
-            }
-        }
-
-        return .{ .success = current_run };
-    }
 };
 
 pub const TestCharacteristics = struct {
@@ -193,29 +116,48 @@ pub const ContructorInformation = struct {
     };
 };
 
-pub const TestOpts = struct {
-    type: Opts.Type,
+// TODO: This doesn't feel it belongs in runner
+pub const TestArg = union(enum) {
+    pub const ArgInt = u64;
 
-    // TODO: I don't really like nullables in here
-    arg: TestArg.ArgInt,
-    timeout_ns: ?u64 = null,
+    /// The test is provided no argument.
+    none,
 
-    tty: std.io.tty.Config,
-    test_fn: TestFn,
-    profiling: ?*Profiling,
+    /// The test is provided all elements in the list one at a time.
+    list: []const ArgInt,
 
-    pub fn zonable(self: *const @This()) Zonable {
-        return .{
-            .type = self.type,
-            .timeout_ns = self.timeout_ns,
-            .arg = self.arg,
-        };
+    /// The test is provided all elements in the exclusive range
+    /// [start..start + n) one at a time.
+    linear: struct { start: ArgInt = 0, n: ArgInt },
+
+    /// The test is provided all elements in the sequence
+    /// [start * 2^0, start * 2^1 ... start * 2^n] one at a time.
+    exponential: struct { start: ArgInt = 1, n: std.math.Log2Int(ArgInt) },
+
+    pub fn iter(self: TestArg) Iter {
+        return .{ .type = self };
     }
 
-    pub const Zonable = struct {
-        type: Opts.Type,
-        timeout_ns: ?u64,
-        arg: ?usize,
+    pub const Iter = struct {
+        type: TestArg,
+        n: ArgInt = 0,
+
+        pub fn next(self: *@This()) ?ArgInt {
+            defer self.n += 1;
+
+            return switch (self.type) {
+                .none => if (self.n == 0) @as(ArgInt, undefined) else null,
+
+                .list => |t| if (self.n < t.len) t[self.n] else null,
+
+                .linear => |t| if (self.n < t.n) t.start + self.n else null,
+
+                .exponential => |t| if (self.n <= t.n)
+                    t.start * (@as(ArgInt, 1) << @intCast(self.n))
+                else
+                    null,
+            };
+        }
     };
 };
 
@@ -231,6 +173,240 @@ pub fn run(alloc: Allocator, opts: TestOpts) !void {
         },
     };
 }
+
+pub const Opts = struct {
+    type: Type,
+    filter: ?[]const u8 = null,
+    min_runtime_ns: u64 = std.time.ns_per_s * 5,
+    tty: std.io.tty.Config = .escape_codes,
+    prefix: [:0]const u8 = "runs",
+    dry_run: bool = false,
+    quiet: bool = false,
+    debug: bool = false,
+
+    pub const Type = enum(u8) {
+        testing,
+        profiling,
+        benchmarking,
+    };
+};
+
+pub fn runAll(
+    alloc: Allocator,
+    tests: []const TestInformation,
+    constrs: []const ContructorInformation,
+    opts: Opts,
+) !void {
+    var logger: RunLogger = try .init(alloc, .{
+        .type = opts.type,
+        .cli = !opts.quiet,
+        .disk = !opts.dry_run,
+        .prefix = opts.prefix,
+    });
+    defer logger.finish(alloc) catch |err| @panic(@errorName(err));
+
+    // TODO: Ugly
+    const filter: Filter = .init(if (opts.filter) |f| &.{f} else null, null, .{
+        .type = opts.type,
+        .meta = true,
+    });
+
+    std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
+
+    // Minimal, single threaded, single process version of the runner
+    if (opts.debug) {
+        tests: for (tests) |test_info| {
+            if (filter.filterTest(test_info)) continue :tests;
+
+            var iter = test_info.arg.iter();
+
+            while (iter.next()) |arg| {
+                constrs: for (constrs) |constr_info| {
+                    if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+
+                    var prof: Profiling = .init;
+
+                    const test_opts: TestOpts = .{
+                        .type = opts.type,
+                        .test_fn = test_info.test_fn,
+                        .timeout_ns = test_info.timeout_ns,
+                        .tty = opts.tty,
+                        .profiling = &prof,
+                        .arg = arg,
+                    };
+
+                    const rerun: Rerun = if (opts.type == .testing)
+                        .once
+                    else
+                        test_info.rerun;
+
+                    const status = try rerun.runMany(
+                        alloc,
+                        constr_info.constr_fn,
+                        test_opts,
+                    );
+
+                    switch (status) {
+                        .success => {},
+                        .failure => {},
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    tests: for (tests) |test_info| {
+        if (filter.filterTest(test_info)) continue :tests;
+
+        const test_run = try logger.startTest(alloc, test_info);
+
+        var iter = test_info.arg.iter();
+
+        while (iter.next()) |arg| {
+            const arg_run = try logger.startArgument(
+                alloc,
+                test_run,
+                test_info.arg,
+                arg,
+            );
+            defer logger.finishArgument(arg_run) catch @panic("Print failure");
+
+            constrs: for (constrs) |constr_info| {
+                if (filter.filterCombination(test_info, constr_info)) continue :constrs;
+
+                try logger.startConstr(constr_info);
+
+                var prof: Profiling = if (opts.type == .profiling) .init else undefined;
+
+                const test_opts: TestOpts = .{
+                    .type = opts.type,
+                    .test_fn = test_info.test_fn,
+                    .timeout_ns = test_info.timeout_ns,
+                    .tty = opts.tty,
+                    .arg = arg,
+                    .profiling = if (opts.type == .profiling) &prof else null,
+                };
+
+                const rerun: Rerun = if (opts.type == .testing)
+                    .once
+                else
+                    test_info.rerun;
+
+                const status = try rerun.runMany(
+                    alloc,
+                    constr_info.constr_fn,
+                    test_opts,
+                );
+
+                switch (status) {
+                    .success => |current_run| {
+                        switch (test_info.charactaristics.failure) {
+                            .no_failure => {},
+                            .any_failure, .term => {
+                                try logger.runFail(null, "Success", 0);
+                                continue :constrs;
+                            },
+                        }
+
+                        try logger.runSuccess(
+                            alloc,
+                            constr_info,
+                            arg_run,
+                            current_run,
+                            if (opts.type == .profiling) &prof else null,
+                        );
+                    },
+
+                    .failure => |stats| {
+                        defer stats.deinit();
+
+                        if (stats.term == .TimedOut) {
+                            try logger.runTimeout();
+                            continue :constrs;
+                        }
+
+                        const reason = switch (test_info.charactaristics.failure) {
+                            .no_failure => "Failed test",
+
+                            // TODO: Call run success here somehow
+                            .any_failure => {
+                                try logger.testSuccess();
+                                continue :constrs;
+                            },
+                            .term => |t| if (std.meta.eql(t, stats.term)) {
+                                try logger.testSuccess();
+                                continue :constrs;
+                            } else "Incorrect error",
+                        };
+
+                        try logger.runFail(stats, reason, stats.term.code());
+                    },
+                }
+            }
+        }
+    }
+}
+
+pub const Rerun = struct {
+    run_at_least: usize,
+    run_for_ns: u64,
+
+    pub const once: Rerun = .{
+        .run_at_least = 1,
+        .run_for_ns = 0,
+    };
+
+    pub const default: Rerun = .{
+        .run_at_least = 20,
+        .run_for_ns = std.time.ns_per_s,
+    };
+
+    pub fn runMany(
+        self: @This(),
+        alloc: Allocator,
+        constr_fn: ConstructorFn,
+        test_opts: TestOpts,
+    ) !union(enum) {
+        success: Run,
+        failure: StatsRet,
+    } {
+        var run_count: usize = 0;
+        var timer = std.time.Timer.start() catch @panic("Must support timers");
+
+        var current_run: Run = .init;
+
+        while (timer.read() < self.run_for_ns or run_count < self.run_at_least) {
+            defer run_count += 1;
+
+            const ret: StatsRet = try runFork(alloc, constr_fn, test_opts);
+
+            switch (ret.term) {
+                else => return .{ .failure = ret },
+                .Exited => |code| {
+                    const status = StatusCode.codeToStatus(code);
+                    switch (status) {
+                        .success => {},
+                        else => return .{ .failure = ret },
+                    }
+                },
+            }
+
+            defer ret.deinit();
+
+            current_run.runs += 1;
+            current_run.time.add(@floatFromInt(ret.performance.wall_time));
+            current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
+            current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
+
+            if (test_opts.type == .profiling) {
+                test_opts.profiling.?.* = ret.profiling.?;
+            }
+        }
+
+        return .{ .success = current_run };
+    }
+};
 
 pub const StatsRet = struct {
     term: process.Term,
@@ -248,12 +424,13 @@ pub const StatsRet = struct {
     }
 };
 
-pub const ChildRet = struct {
-    performance: Performance.Ret,
-    profiling: ?Profiling,
-};
+fn runFork(alloc: Allocator, constr_fn: ConstructorFn, opts: TestOpts) !StatsRet {
+    const ChildRet = struct {
+        performance: Performance.Ret,
+        profiling: ?Profiling,
+    };
 
-pub fn runOnce(alloc: Allocator, constr_fn: ConstructorFn, opts: TestOpts) !StatsRet {
+    // TODO: Look into making child and parent different functions
     switch (try process.fork()) {
         .child => |ret| {
             const err_pipe = ret.err_pipe;
@@ -370,180 +547,6 @@ fn requiresAllocator(T: type) bool {
         .vector => |vector| return vector.len > 0 and requiresAllocator(vector.child),
         else => false,
     };
-}
-
-pub const Opts = struct {
-    type: Type,
-    filter: ?[]const u8 = null,
-    min_runtime_ns: u64 = std.time.ns_per_s * 5,
-    tty: std.io.tty.Config = .escape_codes,
-    prefix: [:0]const u8 = "runs",
-    dry_run: bool = false,
-    quiet: bool = false,
-    debug: bool = false,
-
-    pub const Type = enum(u8) {
-        testing,
-        profiling,
-        benchmarking,
-    };
-};
-
-pub fn runAll(
-    alloc: Allocator,
-    tests: []const TestInformation,
-    constrs: []const ContructorInformation,
-    opts: Opts,
-) !void {
-    var logger: RunLogger = try .init(alloc, .{
-        .type = opts.type,
-        .cli = !opts.quiet,
-        .disk = !opts.dry_run,
-        .prefix = opts.prefix,
-    });
-    defer logger.finish(alloc) catch |err| @panic(@errorName(err));
-
-    // TODO: Ugly
-    const filter: Filter = .init(if (opts.filter) |f| &.{f} else null, null, .{
-        .type = opts.type,
-        .meta = true,
-    });
-
-    std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
-
-    // Minimal, single threaded, single process version of the runner
-    if (opts.debug) {
-        tests: for (tests) |test_info| {
-            if (filter.filterTest(test_info)) continue :tests;
-
-            var iter = test_info.arg.iter();
-
-            while (iter.next()) |arg| {
-                constrs: for (constrs) |constr_info| {
-                    if (filter.filterCombination(test_info, constr_info)) continue :constrs;
-
-                    var prof: Profiling = .init;
-
-                    const test_opts: TestOpts = .{
-                        .type = opts.type,
-                        .test_fn = test_info.test_fn,
-                        .timeout_ns = test_info.timeout_ns,
-                        .tty = opts.tty,
-                        .profiling = &prof,
-                        .arg = arg,
-                    };
-
-                    const rerun: Rerun = if (opts.type == .testing)
-                        .once
-                    else
-                        test_info.rerun;
-
-                    const status = try rerun.run(
-                        alloc,
-                        constr_info.constr_fn,
-                        test_opts,
-                    );
-
-                    switch (status) {
-                        .success => {},
-                        .failure => {},
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    tests: for (tests) |test_info| {
-        if (filter.filterTest(test_info)) continue :tests;
-
-        const test_run = try logger.startTest(alloc, test_info);
-
-        var iter = test_info.arg.iter();
-
-        while (iter.next()) |arg| {
-            const arg_run = try logger.startArgument(
-                alloc,
-                test_run,
-                test_info.arg,
-                arg,
-            );
-            defer logger.finishArgument(arg_run) catch @panic("Print failure");
-
-            constrs: for (constrs) |constr_info| {
-                if (filter.filterCombination(test_info, constr_info)) continue :constrs;
-
-                try logger.startConstr(constr_info);
-
-                var prof: Profiling = if (opts.type == .profiling) .init else undefined;
-
-                const test_opts: TestOpts = .{
-                    .type = opts.type,
-                    .test_fn = test_info.test_fn,
-                    .timeout_ns = test_info.timeout_ns,
-                    .tty = opts.tty,
-                    .arg = arg,
-                    .profiling = if (opts.type == .profiling) &prof else null,
-                };
-
-                const rerun: Rerun = if (opts.type == .testing)
-                    .once
-                else
-                    test_info.rerun;
-
-                const status = try rerun.run(
-                    alloc,
-                    constr_info.constr_fn,
-                    test_opts,
-                );
-
-                switch (status) {
-                    .success => |current_run| {
-                        switch (test_info.charactaristics.failure) {
-                            .no_failure => {},
-                            .any_failure, .term => {
-                                try logger.runFail(null, "Success", 0);
-                                continue :constrs;
-                            },
-                        }
-
-                        try logger.runSuccess(
-                            alloc,
-                            constr_info,
-                            arg_run,
-                            current_run,
-                            if (opts.type == .profiling) &prof else null,
-                        );
-                    },
-
-                    .failure => |stats| {
-                        defer stats.deinit();
-
-                        if (stats.term == .TimedOut) {
-                            try logger.runTimeout();
-                            continue :constrs;
-                        }
-
-                        const reason = switch (test_info.charactaristics.failure) {
-                            .no_failure => "Failed test",
-
-                            // TODO: Call run success here somehow
-                            .any_failure => {
-                                try logger.testSuccess();
-                                continue :constrs;
-                            },
-                            .term => |t| if (std.meta.eql(t, stats.term)) {
-                                try logger.testSuccess();
-                                continue :constrs;
-                            } else "Incorrect error",
-                        };
-
-                        try logger.runFail(stats, reason, stats.term.code());
-                    },
-                }
-            }
-        }
-    }
 }
 
 const FilterOpts = struct {
