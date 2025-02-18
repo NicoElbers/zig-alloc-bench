@@ -128,7 +128,7 @@ pub fn main() !void {
     try runner.runAll(
         gpa.allocator(),
         &tests.default,
-        &allocators.default,
+        &constructors.default,
         opts,
     );
 }
@@ -137,7 +137,7 @@ const std = @import("std");
 const runner = @import("runner");
 
 const tests = @import("tests");
-const allocators = @import("allocators");
+const constructors = @import("constructors");
 
 const assert = std.debug.assert;
 

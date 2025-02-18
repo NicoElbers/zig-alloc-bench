@@ -61,7 +61,7 @@ pub const Rerun = struct {
     pub fn run(
         self: @This(),
         alloc: Allocator,
-        constr_fn: ConstrFn,
+        constr_fn: ConstructorFn,
         test_opts: TestOpts,
     ) !union(enum) {
         success: Run,
@@ -166,9 +166,9 @@ pub const TestInformation = struct {
     };
 };
 
-pub const ConstrFn = *const fn (TestOpts) anyerror!void;
+pub const ConstructorFn = *const fn (TestOpts) anyerror!void;
 
-pub const AllocatorCharacteristics = struct {
+pub const ConstructorCharacteristics = struct {
     thread_safe: bool = true,
     safety: bool = false,
 
@@ -177,8 +177,8 @@ pub const AllocatorCharacteristics = struct {
 pub const ContructorInformation = struct {
     name: []const u8,
     description: ?[]const u8 = null,
-    characteristics: AllocatorCharacteristics,
-    constr_fn: ConstrFn,
+    characteristics: ConstructorCharacteristics,
+    constr_fn: ConstructorFn,
 
     pub fn zonable(self: @This()) Zonable {
         return .{
@@ -189,7 +189,7 @@ pub const ContructorInformation = struct {
 
     pub const Zonable = struct {
         name: []const u8,
-        characteristics: AllocatorCharacteristics,
+        characteristics: ConstructorCharacteristics,
     };
 };
 
@@ -253,7 +253,7 @@ pub const ChildRet = struct {
     profiling: ?Profiling,
 };
 
-pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet {
+pub fn runOnce(alloc: Allocator, constr_fn: ConstructorFn, opts: TestOpts) !StatsRet {
     switch (try process.fork()) {
         .child => |ret| {
             const err_pipe = ret.err_pipe;

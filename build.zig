@@ -25,7 +25,7 @@ pub fn build(b: *Build) void {
     });
     exe_mod.addImport("runner", runner_mod);
     exe_mod.addImport("tests", tests(b, runner_mod, x86_v3, optimize));
-    exe_mod.addImport("allocators", allocators(b, runner_mod, x86_v3, optimize));
+    exe_mod.addImport("constructors", constructors(b, runner_mod, x86_v3, optimize));
 
     const exe = b.addExecutable(.{
         .name = "alloc-bench",
@@ -72,16 +72,16 @@ pub fn tests(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optim
     return tests_mod;
 }
 
-pub fn allocators(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
-    const allocators_mod = b.createModule(.{
-        .root_source_file = b.path("allocators/root.zig"),
+pub fn constructors(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+    const constructors_mod = b.createModule(.{
+        .root_source_file = b.path("constructors/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    allocators_mod.addImport("runner", runner_mod);
+    constructors_mod.addImport("runner", runner_mod);
 
-    return allocators_mod;
+    return constructors_mod;
 }
 
 const OptimizeMode = std.builtin.OptimizeMode;
