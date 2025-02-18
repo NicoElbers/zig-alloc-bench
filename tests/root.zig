@@ -36,17 +36,19 @@ pub const default = [_]TestInformation{
     .{
         .name = "No free",
         .charactaristics = .{
-            .failing = .any_failure,
+            .failure = .any_failure,
             .testing = true,
         },
+        .rerun = .testing,
         .test_fn = &noFree,
     },
     .{
         .name = "Double free",
         .charactaristics = .{
-            .failing = .any_failure,
+            .failure = .any_failure,
             .testing = true,
         },
+        .rerun = .testing,
         .test_fn = &doubleFree,
     },
     .{
@@ -57,9 +59,10 @@ pub const default = [_]TestInformation{
         ,
         .charactaristics = .{
             .meta = true,
-            .failing = .any_failure,
+            .failure = .any_failure,
             .testing = true,
         },
+        .rerun = .testing,
         .test_fn = &failingTest,
     },
     .{
@@ -67,6 +70,7 @@ pub const default = [_]TestInformation{
         .charactaristics = .{
             .testing = true,
         },
+        .rerun = .testing,
         .test_fn = &alignment,
     },
     .{

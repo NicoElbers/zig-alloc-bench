@@ -273,6 +273,13 @@ pub const Term = union(enum) {
     Stopped: u32,
     TimedOut,
     Unknown: u32,
+
+    pub fn code(self: Term) u32 {
+        return switch (self) {
+            .TimedOut => 0,
+            inline else => |v| v,
+        };
+    }
 };
 
 /// Known exit statuses within the project

@@ -163,15 +163,17 @@ fn printPadded(pad: u8, width: u16, file: File, str: []const u8) !void {
     try color.setColor(writer, .reset);
 }
 
-pub fn runFail(self: *Self, ret: StatsRet, reason: []const u8, code: u32) !void {
+pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void {
     self.fail_count += 1;
 
     const stderr = std.io.getStdErr();
     const writer = stderr.writer();
 
-    try dumpFile("stdout", ret.stdout, stderr);
-    try dumpFile("stderr", ret.stderr, stderr);
-    try dumpFile("Error", ret.err_pipe, stderr);
+    if (ret) |r| {
+        try dumpFile("stdout", r.stdout, stderr);
+        try dumpFile("stderr", r.stderr, stderr);
+        try dumpFile("Error", r.err_pipe, stderr);
+    }
 
     const color = std.io.tty.detectConfig(stderr);
     try color.setColor(writer, .red);

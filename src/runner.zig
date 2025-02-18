@@ -40,6 +40,66 @@ pub const TestArg = union(enum) {
     };
 };
 
+pub const Rerun = struct {
+    run_at_least: usize,
+    run_for_ns: u64,
+
+    pub const testing: Rerun = .{
+        .run_at_least = 1,
+        .run_for_ns = 0,
+    };
+
+    pub const default: Rerun = .{
+        .run_at_least = 20,
+        .run_for_ns = std.time.ns_per_s * 5,
+    };
+
+    pub fn run(
+        self: @This(),
+        alloc: Allocator,
+        constr_fn: ConstrFn,
+        test_opts: TestOpts,
+    ) !union(enum) {
+        success: Run,
+        failure: StatsRet,
+    } {
+        var run_count: usize = 0;
+        var timer = std.time.Timer.start() catch @panic("Must support timers");
+
+        var current_run: Run = .init;
+
+        while (timer.read() < self.run_for_ns or run_count < self.run_at_least) {
+            defer run_count += 1;
+
+            const ret: StatsRet = try runOnce(alloc, constr_fn, test_opts);
+
+            switch (ret.term) {
+                else => return .{ .failure = ret },
+                .Exited => |code| {
+                    const status = StatusCode.codeToStatus(code);
+                    switch (status) {
+                        .success => {},
+                        else => return .{ .failure = ret },
+                    }
+                },
+            }
+
+            defer ret.deinit();
+
+            current_run.runs += 1;
+            current_run.time.add(@floatFromInt(ret.performance.wall_time));
+            current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
+            current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
+
+            if (test_opts.type == .profiling) {
+                test_opts.profiling.* = ret.profiling.?;
+            }
+        }
+
+        return .{ .success = current_run };
+    }
+};
+
 pub const TestCharacteristics = struct {
     leaks: bool = false,
     multithreaded: bool = false,
@@ -52,13 +112,14 @@ pub const TestCharacteristics = struct {
     meta: bool = false,
 
     /// A failing test is supposed to emit some error
-    failing: ?Failure = null,
+    failure: Failure = .no_failure,
 
     testing: bool = false,
 
     pub const default: TestCharacteristics = .{};
 
     pub const Failure = union(enum) {
+        no_failure,
         any_failure,
         term: process.Term,
     };
@@ -68,7 +129,7 @@ pub const TestCharacteristics = struct {
             .multithreaded = self.multithreaded,
             .long_running = self.long_running,
             .flaky = self.flaky,
-            .failing = self.failing,
+            .failing = self.failure,
         };
     }
 
@@ -88,6 +149,7 @@ pub const TestInformation = struct {
     charactaristics: TestCharacteristics = .default,
     timeout_ns: ?u64 = null,
     arg: TestArg = .none,
+    rerun: Rerun = .default,
 
     pub fn zonable(self: @This()) Zonable {
         return .{
@@ -374,7 +436,21 @@ pub fn runAll(
                         .arg = arg,
                     };
 
-                    try constr_info.constr_fn(test_opts);
+                    const rerun: Rerun = if (opts.type == .testing)
+                        .testing
+                    else
+                        test_info.rerun;
+
+                    const status = try rerun.run(
+                        alloc,
+                        constr_info.constr_fn,
+                        test_opts,
+                    );
+
+                    switch (status) {
+                        .success => {},
+                        .failure => {},
+                    }
                 }
             }
         }
@@ -401,8 +477,6 @@ pub fn runAll(
 
                 try logger.startConstr(constr_info);
 
-                var current_run: Run = .init;
-
                 var prof: Profiling = if (opts.type == .profiling) .init else undefined;
 
                 const test_opts: TestOpts = .{
@@ -414,105 +488,58 @@ pub fn runAll(
                     .profiling = &prof,
                 };
 
-                // TODO: This feels icky
-                const runtime: u64 = if (opts.type == .testing)
-                    0
+                const rerun: Rerun = if (opts.type == .testing)
+                    .testing
                 else
-                    opts.min_runtime_ns;
+                    test_info.rerun;
 
-                // TODO: This should be in option for the test
-                var ran_once = false;
-                var any_failed = false;
-                var timer = std.time.Timer.start() catch unreachable;
-                while (timer.read() < runtime or !ran_once) {
-                    defer ran_once = true;
+                const status = try rerun.run(
+                    alloc,
+                    constr_info.constr_fn,
+                    test_opts,
+                );
 
-                    const ret: StatsRet = try runOnce(alloc, constr_info.constr_fn, test_opts);
-                    defer ret.deinit();
+                switch (status) {
+                    .success => |current_run| {
+                        switch (test_info.charactaristics.failure) {
+                            .no_failure => {},
+                            .any_failure, .term => {
+                                try logger.runFail(null, "Success", 0);
+                                continue :constrs;
+                            },
+                        }
 
-                    switch (ret.term) {
-                        inline else => |v, t| {
-                            if (test_info.charactaristics.failing) |f|
-                                switch (f) {
-                                    .any_failure => {},
-                                    .term => |term| if (term != t or @field(term, @tagName(t)) != v) {
-                                        try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
-                                        if (opts.type != .testing) return;
-                                        any_failed = true;
-                                        break;
-                                    },
-                                }
-                            else {
-                                try logger.runFail(ret, @tagName(t), if (@TypeOf(v) == void) 0 else v);
-                                if (opts.type != .testing) return;
-                                any_failed = true;
-                                break;
-                            }
-                        },
-                        .Exited => |code| {
-                            const status = StatusCode.codeToStatus(code);
-                            switch (status) {
-                                .success => {
-                                    if (test_info.charactaristics.failing) |_| {
-                                        try logger.runFail(ret, "Succeeded failing test", code);
-                                        if (opts.type != .testing) return;
-                                        any_failed = true;
-                                        break;
-                                    }
-                                },
-                                inline else => |t| {
-                                    if (test_info.charactaristics.failing) |f| switch (f) {
-                                        .any_failure => {},
-                                        .term => |term| if (term != .Exited or term.Exited != code) {
-                                            try logger.runFail(ret, "Incorrect failure exited", code);
-                                            if (opts.type != .testing) return;
-                                            any_failed = true;
-                                            break;
-                                        },
-                                    } else {
-                                        try logger.runFail(ret, @tagName(t), code);
-                                        if (opts.type != .testing) return;
-                                        any_failed = true;
-                                        break;
-                                    }
-                                },
-                            }
-                        },
-                    }
-
-                    current_run.runs += 1;
-                    current_run.time.add(@floatFromInt(ret.performance.wall_time));
-                    current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
-                    current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
-                    if (opts.type == .profiling) {
-                        prof = ret.profiling.?;
-                    }
-                }
-
-                if (!any_failed) {
-                    if (first) |f| {
+                        if (first == null) {
+                            first = .{
+                                .run = current_run,
+                                .prof = prof,
+                            };
+                        }
                         try logger.runSucess(
                             alloc,
-                            f.run,
-                            &f.prof,
+                            first.?.run,
+                            &first.?.prof,
                             current_run,
                             test_opts,
                             &prof,
                         );
-                    } else {
-                        try logger.runSucess(
-                            alloc,
-                            null,
-                            null,
-                            current_run,
-                            test_opts,
-                            &prof,
-                        );
-                        first = .{
-                            .run = current_run,
-                            .prof = prof,
+                    },
+
+                    .failure => |stats| {
+                        defer stats.deinit();
+                        const reason = switch (test_info.charactaristics.failure) {
+                            .no_failure => "Failed test",
+
+                            // TODO: Call run success here somehow
+                            .any_failure => continue :constrs,
+                            .term => |t| if (std.meta.eql(t, stats.term))
+                                continue :constrs
+                            else
+                                "Incorrect error",
                         };
-                    }
+
+                        try logger.runFail(stats, reason, stats.term.code());
+                    },
                 }
             }
         }
