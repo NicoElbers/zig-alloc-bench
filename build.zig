@@ -6,6 +6,8 @@ pub fn build(b: *Build) void {
         .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
     });
 
+    const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
+
     const optimize: OptimizeMode = switch (b.release_mode) {
         .off => .Debug,
         .any => .ReleaseSafe,
@@ -28,6 +30,8 @@ pub fn build(b: *Build) void {
     const exe = b.addExecutable(.{
         .name = "alloc-bench",
         .root_module = exe_mod,
+        .use_llvm = !selfhosted,
+        .use_lld = !selfhosted,
     });
     b.installArtifact(exe);
 
