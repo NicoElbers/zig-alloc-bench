@@ -12,7 +12,7 @@ pub const default = [_]TestInformation{
         .name = "Many allocations and frees",
         .test_fn = &manyAllocFree,
         .timeout_ns = std.time.ns_per_s,
-        .arg = .{ .exponential = .{ .start = 1 << 15, .n = 5 } },
+        .arg = .{ .exponential = .{ .start = 1 << 13, .n = 7 } },
     },
     .{
         .name = "Many allocations, resizes and frees",
