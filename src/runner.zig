@@ -96,7 +96,7 @@ pub const Rerun = struct {
             current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
 
             if (test_opts.type == .profiling) {
-                test_opts.profiling.* = ret.profiling.?;
+                test_opts.profiling.?.* = ret.profiling.?;
             }
         }
 
@@ -201,7 +201,7 @@ pub const TestOpts = struct {
 
     tty: std.io.tty.Config,
     test_fn: TestFn,
-    profiling: *Profiling,
+    profiling: ?*Profiling,
 
     pub fn zonable(self: *const @This()) Zonable {
         return .{
@@ -224,7 +224,7 @@ pub fn run(alloc: Allocator, opts: TestOpts) !void {
     return switch (opts.type) {
         .testing, .benchmarking => try opts.test_fn(alloc, opts.arg),
         .profiling => {
-            var profiler = ProfilingAllocator.init(alloc, opts.profiling);
+            var profiler = ProfilingAllocator.init(alloc, opts.profiling.?);
 
             try opts.test_fn(profiler.allocator(), opts.arg);
         },
@@ -279,10 +279,7 @@ pub fn runOnce(alloc: Allocator, constr_fn: ConstrFn, opts: TestOpts) !StatsRet 
 
             const child_ret: ChildRet = .{
                 .performance = perf,
-                .profiling = if (opts.type == .profiling)
-                    opts.profiling.*
-                else
-                    null,
+                .profiling = if (opts.profiling) |p| p.* else null,
             };
 
             // Dump information on the IPC pipe
@@ -485,7 +482,7 @@ pub fn runAll(
                     .timeout_ns = test_info.timeout_ns,
                     .tty = opts.tty,
                     .arg = arg,
-                    .profiling = &prof,
+                    .profiling = if (opts.type == .profiling) &prof else null,
                 };
 
                 const rerun: Rerun = if (opts.type == .testing)
@@ -521,7 +518,7 @@ pub fn runAll(
                             &first.?.prof,
                             current_run,
                             test_opts,
-                            &prof,
+                            if (opts.type == .profiling) &prof else null,
                         );
                     },
 
