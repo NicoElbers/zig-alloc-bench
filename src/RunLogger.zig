@@ -330,10 +330,11 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
     }
 
     inline for (.{
-        "time",
-        "max_rss",
-        "cache_misses",
-    }) |tally_name| {
+        .{ "time", Unit.time },
+        .{ "max_rss", Unit.memory },
+        .{ "cache_misses", Unit.percent },
+    }) |stat| {
+        const tally_name: []const u8, const unit: Unit = stat;
         const first_tally = @field(first.run, tally_name);
 
         // Seperating line
@@ -388,8 +389,6 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
             "p99",
             "max",
         }) |field| {
-            const unit: Unit = .time;
-
             const first_v = @field(first_tally, field);
 
             for (chunk, 0..) |run, i| {
@@ -416,7 +415,7 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
 
                 // Actual value
                 {
-                    const value, const suffix = unit.convert(@field(run.run.time, field));
+                    const value, const suffix = unit.convert(@field(tally, field));
 
                     try color.setColor(writer, .green);
                     try inner_writer.print(" {d: >6.2} ", .{value});
