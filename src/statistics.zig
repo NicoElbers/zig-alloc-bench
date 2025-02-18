@@ -316,6 +316,7 @@ pub const Tally = struct {
         assert(self.isValid());
 
         return .{
+            .outliers = self.getOutliers(),
             .min = self.getMin(),
             .p50 = self.getP50(),
             .p90 = self.getP90(),
@@ -325,6 +326,7 @@ pub const Tally = struct {
     }
 
     pub const Zonable = struct {
+        outliers: f64,
         min: f64,
         p50: f64,
         p90: f64,
