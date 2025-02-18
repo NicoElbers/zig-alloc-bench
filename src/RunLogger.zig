@@ -1,10 +1,68 @@
-runs: std.ArrayListUnmanaged(Run.Zonable) = .empty,
+test_runs: std.ArrayListUnmanaged(TestRun) = .empty,
 output: ?Output = null,
 fail_count: u32 = 0,
 opts: Opts,
 
 const Self = @This();
 
+pub const TestRun = struct {
+    test_info: TestInformation.Zonable,
+    args: std.ArrayListUnmanaged(ArgRun) = .empty,
+
+    pub fn deinit(self: *TestRun, alloc: Allocator) void {
+        for (self.args.items) |*arg| {
+            arg.deinit(alloc);
+        }
+        self.args.deinit(alloc);
+
+        self.* = undefined;
+    }
+
+    pub fn zonable(self: TestRun, alloc: Allocator) !TestRun.Zonable {
+        const args = try alloc.alloc(ArgRun.Zonable, self.args.items.len);
+
+        for (self.args.items, 0..) |arg, i| {
+            args[i] = arg.zonable();
+        }
+
+        return .{
+            .test_info = self.test_info,
+            .args = args,
+        };
+    }
+
+    pub const Zonable = struct {
+        test_info: TestInformation.Zonable,
+        args: []const ArgRun.Zonable,
+    };
+};
+
+pub const ArgRun = struct {
+    arg: ?TestArg.ArgInt,
+    constrs: std.ArrayListUnmanaged(ConstrRun) = .empty,
+
+    pub fn deinit(self: *ArgRun, alloc: Allocator) void {
+        self.constrs.deinit(alloc);
+
+        self.* = undefined;
+    }
+
+    pub fn zonable(self: ArgRun) ArgRun.Zonable {
+        return .{
+            .arg = self.arg,
+            .constrs = self.constrs.items,
+        };
+    }
+
+    pub const Zonable = struct {
+        arg: ?TestArg.ArgInt,
+        constrs: []const ConstrRun,
+    };
+};
+pub const ConstrRun = struct {
+    constr_info: ContructorInformation.Zonable,
+    run: Run.Zonable,
+};
 pub const Output = struct {
     dir: std.fs.Dir,
     last_increment_path: [:0]const u8,
@@ -17,9 +75,22 @@ pub const Output = struct {
     }
 };
 
+pub fn zonable(self: *const Self, alloc: Allocator) !Zonable {
+    const test_runs = try alloc.alloc(TestRun.Zonable, self.test_runs.items.len);
+
+    for (self.test_runs.items, 0..) |arg, i| {
+        test_runs[i] = try arg.zonable(alloc);
+    }
+
+    return .{
+        .build = .{},
+        .test_runs = test_runs,
+    };
+}
+
 pub const Zonable = struct {
-    build: Build = .{},
-    runs: []const Run.Zonable = &.{},
+    build: Build,
+    test_runs: []const TestRun.Zonable,
 
     pub const Build = struct {
         optimization: std.builtin.OptimizeMode = buitin.mode,
@@ -28,13 +99,6 @@ pub const Zonable = struct {
         os: std.Target.Os.Tag = buitin.os.tag,
     };
 };
-
-pub fn zonable(self: *const Self) Zonable {
-    return .{
-        .build = .{},
-        .runs = self.runs.items,
-    };
-}
 
 pub const Opts = struct {
     cli: bool = true,
@@ -86,7 +150,9 @@ pub fn init(alloc: Allocator, opts: Opts) !Self {
 }
 
 pub fn deinit(self: *Self, alloc: Allocator) void {
-    self.runs.deinit(alloc);
+    for (self.test_runs.items) |*test_run|
+        test_run.deinit(alloc);
+    self.test_runs.deinit(alloc);
 
     if (self.output) |*out| {
         out.dir.close();
@@ -97,55 +163,314 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
 }
 
 // TODO: Maybe print characteristics here in the future
-pub fn startTest(self: Self, test_info: TestInformation) !void {
-    if (!self.opts.cli) return;
+pub fn startTest(self: *Self, alloc: Allocator, test_info: TestInformation) !*TestRun {
+    if (self.opts.cli) {
+        const stdout = std.io.getStdOut();
 
-    const stdout = std.io.getStdOut();
+        try stdout.writeAll("\n");
+        try stdout.writeAll("\n");
+        try printPadded('=', 50, stdout, test_info.name);
+    }
 
-    try stdout.writeAll("\n");
-    try stdout.writeAll("\n");
-    try printPadded('=', 50, stdout, test_info.name);
+    try self.test_runs.append(alloc, .{ .test_info = test_info.zonable() });
+    return &self.test_runs.items[self.test_runs.items.len - 1];
 }
 
 const test_line_width = 30;
 
-pub fn startArgument(self: Self, typ: TestArg, arg: TestArg.ArgInt) !void {
-    if (!self.opts.cli) return;
-    if (typ == .none) return;
+pub fn startArgument(self: Self, alloc: Allocator, test_run: *TestRun, typ: TestArg, arg: TestArg.ArgInt) !*ArgRun {
+    if (typ == .none) {
+        try test_run.args.append(alloc, .{ .arg = null });
+        return &test_run.args.items[test_run.args.items.len - 1];
+    }
 
+    if (self.opts.cli) {
+        const stdout = std.io.getStdOut();
+        const writer = stdout.writer();
+        const color = std.io.tty.detectConfig(stdout);
+
+        const arg_str = @tagName(typ);
+
+        const mid_len = std.fmt.count(" {s}: {d} ", .{ arg_str, arg });
+        const pad_sides = (test_line_width - mid_len) / 2;
+
+        try color.setColor(writer, .dim);
+        try writer.writeAll("\n");
+        try writer.writeByteNTimes('-', pad_sides);
+
+        try writer.writeAll(" ");
+        try writer.writeAll(arg_str);
+        try writer.writeAll(": ");
+        try color.setColor(writer, .reset);
+        try color.setColor(writer, .cyan);
+        try writer.print("{d}", .{arg});
+        try writer.writeAll(" ");
+        try color.setColor(writer, .reset);
+
+        try color.setColor(writer, .dim);
+        try writer.writeByteNTimes('-', pad_sides);
+        try writer.writeAll("\n");
+        try color.setColor(writer, .reset);
+    }
+
+    try test_run.args.append(alloc, .{ .arg = arg });
+    return &test_run.args.items[test_run.args.items.len - 1];
+}
+
+// Joined from https://github.com/ziglang/zig/pull/22369
+fn termWidth(file: File) error{ NotATerminal, Unexpected }!struct { rows: u16, columns: u16 } {
+    const native_os = @import("builtin").os.tag;
+    const windows = std.os.windows;
+    const posix = std.posix;
+
+    if (native_os == .windows) {
+        var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+        if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != windows.FALSE) {
+            // In the old Windows console, info.dwSize.Y is the line count of the
+            // entire scrollback buffer, so we use this instead so that we
+            // always get the size of the screen.
+            const screen_height = info.srWindow.Bottom - info.srWindow.Top;
+            return .{
+                .rows = @intCast(screen_height),
+                .columns = @intCast(info.dwSize.X),
+            };
+        } else {
+            return error.NotATerminal;
+        }
+    } else {
+        var winsize: posix.winsize = undefined;
+        return switch (posix.errno(posix.system.ioctl(file.handle, posix.T.IOCGWINSZ, @intFromPtr(&winsize)))) {
+            .SUCCESS => .{ .rows = winsize.row, .columns = winsize.col },
+            .NOTTY => error.NotATerminal,
+            .BADF, .FAULT, .INVAL => unreachable,
+            else => |err| posix.unexpectedErrno(err),
+        };
+    }
+}
+
+pub fn ChunkIter(comptime T: type) type {
+    return struct {
+        arr: []const T,
+        idx: usize,
+        width: usize,
+
+        pub fn next(self: *@This()) ?[]const T {
+            if (self.idx >= self.arr.len) return null;
+
+            defer self.idx += self.width;
+            return self.arr[self.idx..@min(self.idx + self.width, self.arr.len)];
+        }
+    };
+}
+
+const prefix_len = " cache_misses |".len;
+const tally_len = 24;
+
+pub fn finishArgument(self: *const Self, arg_run: *ArgRun) !void {
+    if (self.opts.type == .testing) return;
+    if (!self.opts.cli) return;
+
+    const stdout = std.io.getStdOut();
+    const writer = stdout.writer();
+
+    const term_size = try termWidth(stdout);
+    const tallies_per_row = (term_size.columns - prefix_len) / tally_len;
+
+    // const first_run = arg_run.constrs.items[0];
+
+    var iter: ChunkIter(ConstrRun) = .{
+        .arr = arg_run.constrs.items,
+        .idx = 0,
+        .width = tallies_per_row,
+    };
+
+    while (iter.next()) |chunk| {
+        try self.logChunk(arg_run.constrs.items[0], chunk);
+    }
+    try writer.writeAll("\n");
+
+    // TODO: Log entire argrun
+}
+
+fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !void {
     const stdout = std.io.getStdOut();
     const writer = stdout.writer();
     const color = std.io.tty.detectConfig(stdout);
 
-    const mid_len = std.fmt.count(" {s}: {d} ", .{ @tagName(typ), arg });
-    const pad_sides = (test_line_width - mid_len) / 2;
+    _ = self;
 
-    try color.setColor(writer, .dim);
+    const first = first_run;
+
     try writer.writeAll("\n");
-    try writer.writeByteNTimes('-', pad_sides);
+    {
+        var counter = std.io.countingWriter(writer);
+        const inner_writer = counter.writer();
 
-    try writer.writeAll(" ");
-    try writer.writeAll(@tagName(typ));
-    try writer.writeAll(": ");
-    try color.setColor(writer, .reset);
-    try color.setColor(writer, .cyan);
-    try writer.print("{d}", .{arg});
-    try writer.writeAll(" ");
-    try color.setColor(writer, .reset);
+        try color.setColor(writer, .dim);
+        try inner_writer.writeAll(" name");
+        try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
+        try writer.writeAll("|");
+        try color.setColor(writer, .reset);
+    }
 
-    try color.setColor(writer, .dim);
-    try writer.writeByteNTimes('-', pad_sides);
+    // Allocator names
+    {
+        var counter = std.io.countingWriter(writer);
+        const inner_writer = counter.writer();
+
+        for (chunk) |run| {
+            try inner_writer.print(" {s}", .{run.constr_info.name});
+            try inner_writer.writeByteNTimes(' ', tally_len - 1 - run.constr_info.name.len);
+
+            try color.setColor(writer, .dim);
+            try inner_writer.writeAll("|");
+            try color.setColor(writer, .reset);
+        }
+        try writer.writeAll("\n");
+    }
+
+    inline for (.{
+        "time",
+        "max_rss",
+        "cache_misses",
+    }) |tally_name| {
+        const first_tally = @field(first.run, tally_name);
+
+        // Seperating line
+        {
+            try color.setColor(writer, .dim);
+            try writer.writeByteNTimes('-', prefix_len - 1);
+            try writer.writeAll("+");
+
+            for (chunk) |_| {
+                try writer.writeByteNTimes('-', tally_len);
+                try writer.writeAll("+");
+            }
+            try writer.writeAll("\n");
+        }
+
+        // prefix
+        {
+            var counter = std.io.countingWriter(writer);
+            const inner_writer = counter.writer();
+
+            try color.setColor(writer, .dim);
+            try inner_writer.writeAll(" ");
+            try inner_writer.writeAll(tally_name);
+
+            try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
+            try writer.writeAll("|");
+
+            for (chunk) |_| {
+                try writer.writeByteNTimes(' ', tally_len);
+                try writer.writeAll("|");
+            }
+            try writer.writeAll("\n");
+        }
+
+        // Seperating line
+        {
+            try color.setColor(writer, .dim);
+            try writer.writeByteNTimes('-', prefix_len - 1);
+            try writer.writeAll("+");
+
+            for (chunk) |_| {
+                try writer.writeByteNTimes('-', tally_len);
+                try writer.writeAll("+");
+            }
+            try writer.writeAll("\n");
+        }
+
+        inline for (.{
+            "min",
+            "p50",
+            "p90",
+            "p99",
+            "max",
+        }) |field| {
+            const unit: Unit = .time;
+
+            const first_v = @field(first_tally, field);
+
+            for (chunk, 0..) |run, i| {
+                const tally = @field(run.run, tally_name);
+
+                // prefix
+                if (i == 0) {
+                    var counter = std.io.countingWriter(writer);
+                    const inner_writer = counter.writer();
+
+                    try color.setColor(writer, .dim);
+                    try inner_writer.writeAll(" ");
+                    try inner_writer.writeAll(field);
+
+                    try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
+                    try writer.writeAll("|");
+                    try color.setColor(writer, .reset);
+                }
+
+                var counter = std.io.countingWriter(writer);
+                const inner_writer = counter.writer();
+
+                const current_v = @field(tally, field);
+
+                // Actual value
+                {
+                    const value, const suffix = unit.convert(@field(run.run.time, field));
+
+                    try color.setColor(writer, .green);
+                    try inner_writer.print(" {d: >6.2} ", .{value});
+                    try color.setColor(writer, .reset);
+                    try color.setColor(writer, .dim);
+                    try inner_writer.writeAll(&suffix);
+                    try color.setColor(writer, .reset);
+                }
+
+                try inner_writer.writeByteNTimes(' ', 2);
+
+                // Delta
+                {
+                    const percent = ((current_v - first_v) / first_v) * 100;
+                    const value, const suffix = Unit.percent.convert(@abs(percent));
+
+                    try color.setColor(writer, if (percent < -1)
+                        .bright_green
+                    else if (percent > 1)
+                        .bright_red
+                    else
+                        .dim);
+                    try inner_writer.writeAll(if (percent < 0) "-" else "+");
+                    try inner_writer.print("{d: >6.2} ", .{value});
+                    try inner_writer.writeAll(suffix[0..1]);
+                    try color.setColor(writer, .reset);
+                }
+
+                try inner_writer.writeByteNTimes(' ', tally_len -| counter.bytes_written);
+
+                try color.setColor(writer, .dim);
+                try writer.writeAll("|");
+                try color.setColor(writer, .reset);
+            }
+            try writer.writeAll("\n");
+        }
+    }
+
     try writer.writeAll("\n");
-    try color.setColor(writer, .reset);
 }
 
 pub fn startConstr(self: Self, constr_info: ContructorInformation) !void {
-    if (!self.opts.cli) return;
+    if (self.opts.cli) {
+        const stdout = std.io.getStdOut();
+        const writer = stdout.writer();
+        const color = std.io.tty.detectConfig(stdout);
 
-    const stdout = std.io.getStdOut();
+        const len = std.fmt.count("{s} ", .{constr_info.name});
 
-    try stdout.writeAll("\n");
-    try printPadded('-', 30, stdout, constr_info.name);
+        try color.setColor(writer, .dim);
+        try writer.print("{s} ", .{constr_info.name});
+        try writer.writeByteNTimes(' ', 20 - len);
+        try color.setColor(writer, .reset);
+    }
 }
 
 fn printPadded(pad: u8, width: u16, file: File, str: []const u8) !void {
@@ -171,7 +496,12 @@ pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void
     self.fail_count += 1;
 
     const stderr = std.io.getStdErr();
+    const color = std.io.tty.detectConfig(stderr);
     const writer = stderr.writer();
+
+    try color.setColor(writer, .red);
+    try writer.print("Failure\n", .{});
+    try color.setColor(writer, .reset);
 
     if (ret) |r| {
         try dumpFile("stdout", r.stdout, stderr);
@@ -179,7 +509,6 @@ pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void
         try dumpFile("Error", r.err_pipe, stderr);
     }
 
-    const color = std.io.tty.detectConfig(stderr);
     try color.setColor(writer, .red);
     try writer.print("Failed due to {s} ({d})\n", .{ reason, code });
     try color.setColor(writer, .reset);
@@ -216,186 +545,33 @@ fn dumpFile(file_name: []const u8, read: File, write: File) !void {
     }
 }
 
-const Order = enum { higher_better, lower_better };
-fn resultTally(
-    file: File,
-    comptime name: []const u8,
-    order: Order,
-    unit: Unit,
-    tally: anytype,
-    first_tally: @TypeOf(tally),
-) !void {
-    switch (@TypeOf(tally)) {
-        Tally => {},
-        statistics.LazyTally => if (tally.tally == null) return,
-        statistics.FallableTally => {
-            try resultTally(file, name ++ " success", order, unit, tally.success, first_tally.success);
-            try resultTally(file, name ++ " failure", order, unit, tally.failure, first_tally.failure);
-            return;
-        },
-        else => @compileLog("no"),
-    }
-
-    const color = std.io.tty.detectConfig(file);
-
-    const writer = file.writer();
-
-    const cli = struct {
-        pub fn prefix(val: f64) []const u8 {
-            return if (val > 0) "+" else if (val == 0) " " else "-";
-        }
-
-        pub fn percentClr(ord: Order, percent: f64) std.io.tty.Color {
-            return if (percent > 1)
-                switch (ord) {
-                    .higher_better => .bright_green,
-                    .lower_better => .bright_red,
-                }
-            else if (percent < -1)
-                switch (ord) {
-                    .higher_better => .bright_red,
-                    .lower_better => .bright_green,
-                }
-            else
-                .dim;
-        }
-    };
-
-    const outliers = tally.getOutliers();
-
-    try color.setColor(writer, .bold);
-    try writer.writeAll("\n" ++ name ++ ": ");
-    try color.setColor(writer, .reset);
-
-    if (outliers > 10) {
-        try color.setColor(writer, .bright_yellow);
-    } else {
-        try color.setColor(writer, .dim);
-    }
-    try writer.print("({d:.2} outliers)\n", .{tally.getOutliers()});
-    try color.setColor(writer, .reset);
-
-    const min_t = tally.getMin();
-    const p50_t = tally.getP50();
-    const p90_t = tally.getP90();
-    const p99_t = tally.getP99();
-    const max_t = tally.getMax();
-
-    const min_f = first_tally.getMin();
-    const p50_f = first_tally.getP50();
-    const p90_f = first_tally.getP90();
-    const p99_f = first_tally.getP99();
-    const max_f = first_tally.getMax();
-
-    inline for (.{
-        .{ "min", min_f, min_t },
-        .{ "p50", p50_f, p50_t },
-        .{ "p90", p90_f, p90_t },
-        .{ "p99", p99_f, p99_t },
-        .{ "max", max_f, max_t },
-    }) |tuple| {
-        const section_name, const first, const current = tuple;
-
-        try writer.writeAll(" ");
-
-        try writer.writeAll(section_name);
-        try color.setColor(writer, .reset);
-
-        const name_space = 3 - section_name.len;
-        try writer.writeByteNTimes(' ', name_space);
-        try writer.writeAll(": ");
-
-        {
-            const value, const suffix = unit.convert(current);
-
-            try color.setColor(writer, .green);
-            try writer.print("{d: >6.2} ", .{value});
-            try color.setColor(writer, .reset);
-            try color.setColor(writer, .dim);
-            try writer.writeAll(&suffix);
-            try color.setColor(writer, .reset);
-            try writer.writeAll(" ");
-        }
-
-        try writer.writeByteNTimes(' ', 2);
-
-        {
-            const percent = ((current - first) / first) * 100;
-            const value, const suffix = Unit.percent.convert(@abs(percent));
-
-            try color.setColor(writer, cli.percentClr(order, percent));
-            try writer.writeAll(cli.prefix(percent));
-            try writer.print("{d: >6.2} ", .{value});
-            try writer.writeAll(&suffix);
-            try color.setColor(writer, .reset);
-            try writer.writeAll(" ");
-        }
-
-        try writer.writeAll("\n");
-    }
-}
-
-pub fn runSucess(
+pub fn runSuccess(
     self: *Self,
     alloc: Allocator,
-    first_run: ?Run,
-    first_prof: ?*const Profiling,
+    constr_info: ContructorInformation,
+    arg_run: *ArgRun,
     run_info: Run,
-    test_opts: TestOpts,
-    prof: *const Profiling,
+    prof: ?*const Profiling,
 ) !void {
+    try arg_run.constrs.append(alloc, .{
+        .constr_info = constr_info.zonable(),
+        .run = run_info.zonable(prof),
+    });
+
+    if (self.opts.disk) try updateFile(self, alloc);
+
+    if (!self.opts.cli) return;
+
     const stdout = std.io.getStdOut();
     const color = std.io.tty.detectConfig(stdout);
     const writer = stdout.writer();
 
-    if (self.opts.type == .testing) {
-        try color.setColor(writer, .green);
-        try writer.writeAll("Run Sucess\n");
-        try color.setColor(writer, .reset);
-        return;
-    }
-
-    // update file _first_ to reduce the risk of losing a run
-    if (self.opts.disk) try updateFile(self, alloc, run_info, test_opts, prof);
-
-    if (!self.opts.cli) return;
-
-    const run_v, const runs_s = statistics.Unit.counter.convert(@floatFromInt(run_info.runs));
-
-    try color.setColor(writer, .dim);
-    try stdout.writer().print("Runs: {d:.2} {s}\n", .{ run_v, runs_s });
+    try color.setColor(writer, .green);
+    try writer.print("Success ({d})\n", .{run_info.runs});
     try color.setColor(writer, .reset);
-
-    const first_time = if (first_run) |fr| fr.time else run_info.time;
-    const first_max_rss = if (first_run) |fr| fr.max_rss else run_info.max_rss;
-    const first_cache_misses = if (first_run) |fr| fr.cache_misses else run_info.cache_misses;
-
-    try resultTally(stdout, "Time", .lower_better, .time, run_info.time, first_time);
-    try resultTally(stdout, "Max rss", .lower_better, .memory, run_info.max_rss, first_max_rss);
-    try resultTally(stdout, "Cache misses", .lower_better, .percent, run_info.cache_misses, first_cache_misses);
-
-    if (self.opts.type == .profiling) {
-        const first_allocations = if (first_prof) |fp| fp.allocations else prof.allocations;
-        const first_remaps = if (first_prof) |fp| fp.remaps else prof.remaps;
-        const first_resizes = if (first_prof) |fp| fp.resizes else prof.resizes;
-        const first_frees = if (first_prof) |fp| fp.frees else prof.frees;
-
-        try resultTally(stdout, "Allocations", .lower_better, .time, prof.allocations, first_allocations);
-        try resultTally(stdout, "Remaps", .lower_better, .time, prof.remaps, first_remaps);
-        try resultTally(stdout, "Resizes", .lower_better, .time, prof.resizes, first_resizes);
-        try resultTally(stdout, "Frees", .lower_better, .time, prof.frees, first_frees);
-    }
 }
 
-fn updateFile(
-    self: *Self,
-    alloc: Allocator,
-    run_info: Run,
-    test_opts: TestOpts,
-    prof: *const Profiling,
-) !void {
-    try self.runs.append(alloc, run_info.zonable(test_opts, prof));
-
+fn updateFile(self: *Self, alloc: Allocator) !void {
     if (self.output) |*out| {
         const path = try out.incrementName(alloc);
         errdefer alloc.free(path);
@@ -403,7 +579,11 @@ fn updateFile(
         const new_increment = try out.dir.createFileZ(path, .{ .exclusive = true });
         defer new_increment.close();
 
-        try std.zon.stringify.serialize(self.zonable(), .{}, new_increment.writer());
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+
+        @setEvalBranchQuota(2000);
+        try std.zon.stringify.serialize(try self.zonable(arena.allocator()), .{}, new_increment.writer());
         try new_increment.sync(); // Ensure our new increment is written to disk
 
         // At this stage we know our new increment is fully written, we can delete the old one
@@ -419,7 +599,7 @@ pub fn finish(self: *Self, alloc: Allocator) !void {
     if (self.fail_count == 0) {
         if (self.output) |*out| {
             // TODO: make the timestamp human readable
-            const path = try std.fmt.allocPrintZ(alloc, "run_{d}", .{std.time.timestamp()});
+            const path = try std.fmt.allocPrintZ(alloc, "run_{d}.zon", .{std.time.timestamp()});
             defer alloc.free(path);
 
             try out.dir.renameZ(out.last_increment_path, path);
@@ -431,7 +611,7 @@ pub fn finish(self: *Self, alloc: Allocator) !void {
 
         if (self.output) |*out| {
             // TODO: make the timestamp human readable
-            const path = try std.fmt.allocPrintZ(alloc, "failed_run_{d}", .{std.time.timestamp()});
+            const path = try std.fmt.allocPrintZ(alloc, "failed_run_{d}.zon", .{std.time.timestamp()});
             defer alloc.free(path);
 
             try out.dir.renameZ(out.last_increment_path, path);

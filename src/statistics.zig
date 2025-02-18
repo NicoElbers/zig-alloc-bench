@@ -461,23 +461,21 @@ pub const Run = struct {
     cache_misses: Tally = .init,
 
     // FIXME: Create some 'full run' struct that includes profiling, opts everything
-    pub fn zonable(self: *const Run, test_opts: TestOpts, profiling: ?*const Profiling) Zonable {
+    pub fn zonable(self: *const Run, profiling: ?*const Profiling) Zonable {
         return .{
             .runs = self.runs,
-            .opts = test_opts.zonable(),
             .time = self.time.zonable(),
             .max_rss = self.max_rss.zonable(),
-            .cache_miss_percent = self.cache_misses.zonable(),
+            .cache_misses = self.cache_misses.zonable(),
             .profiling = if (profiling) |p| p.zonable() else null,
         };
     }
 
     pub const Zonable = struct {
         runs: usize,
-        opts: TestOpts.Zonable,
         time: Tally.Zonable,
         max_rss: Tally.Zonable,
-        cache_miss_percent: Tally.Zonable,
+        cache_misses: Tally.Zonable,
         profiling: ?Profiling.Zonable,
     };
 

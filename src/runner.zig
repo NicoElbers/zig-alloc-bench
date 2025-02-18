@@ -457,17 +457,18 @@ pub fn runAll(
     tests: for (tests) |test_info| {
         if (filter.filterTest(test_info)) continue :tests;
 
-        try logger.startTest(test_info);
+        const test_run = try logger.startTest(alloc, test_info);
 
         var iter = test_info.arg.iter();
 
         while (iter.next()) |arg| {
-            try logger.startArgument(test_info.arg, arg);
-
-            var first: ?struct {
-                run: Run,
-                prof: Profiling,
-            } = null;
+            const arg_run = try logger.startArgument(
+                alloc,
+                test_run,
+                test_info.arg,
+                arg,
+            );
+            defer logger.finishArgument(arg_run) catch @panic("Print failure");
 
             constrs: for (constrs) |constr_info| {
                 if (filter.filterCombination(test_info, constr_info)) continue :constrs;
@@ -506,18 +507,11 @@ pub fn runAll(
                             },
                         }
 
-                        if (first == null) {
-                            first = .{
-                                .run = current_run,
-                                .prof = prof,
-                            };
-                        }
-                        try logger.runSucess(
+                        try logger.runSuccess(
                             alloc,
-                            first.?.run,
-                            &first.?.prof,
+                            constr_info,
+                            arg_run,
                             current_run,
-                            test_opts,
                             if (opts.type == .profiling) &prof else null,
                         );
                     },
