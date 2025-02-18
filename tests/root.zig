@@ -1,12 +1,18 @@
 pub const default = [_]TestInformation{
     .{
-        .name = "Simple allocation",
-        .test_fn = &simpleTest,
-        .arg = .{ .list = &.{ 1, 2, 3 } },
+        .name = "First allocation",
+        .test_fn = &firstAlloc,
+        .arg = .{ .exponential = .{ .n = 20 } },
+        .rerun = .{
+            .run_at_least = 100,
+            .run_for_ns = 0,
+        },
     },
     .{
         .name = "Many allocations and frees",
         .test_fn = &manyAllocFree,
+        .timeout_ns = std.time.ns_per_s,
+        .arg = .{ .exponential = .{ .start = 1 << 15, .n = 5 } },
     },
     .{
         .name = "Many allocations, resizes and frees",
@@ -19,14 +25,10 @@ pub const default = [_]TestInformation{
         .test_fn = &manyAllocRemapsFree,
     },
     .{
-        .name = "Appending to arraylist",
-        .timeout_ns = std.time.ns_per_s,
-        .test_fn = &appendingToArrayList,
-    },
-    .{
         .name = "Appending to many arraylists",
         .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendingToMultipleArrayLists,
+        .arg = .{ .exponential = .{ .n = 5 } },
     },
     .{
         .name = "Random access append",
@@ -39,7 +41,7 @@ pub const default = [_]TestInformation{
             .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .testing,
+        .rerun = .once,
         .test_fn = &noFree,
     },
     .{
@@ -48,7 +50,7 @@ pub const default = [_]TestInformation{
             .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .testing,
+        .rerun = .once,
         .test_fn = &doubleFree,
     },
     .{
@@ -62,7 +64,7 @@ pub const default = [_]TestInformation{
             .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .testing,
+        .rerun = .once,
         .test_fn = &failingTest,
     },
     .{
@@ -70,7 +72,7 @@ pub const default = [_]TestInformation{
         .charactaristics = .{
             .testing = true,
         },
-        .rerun = .testing,
+        .rerun = .once,
         .test_fn = &alignment,
     },
     .{
@@ -80,14 +82,14 @@ pub const default = [_]TestInformation{
     },
 };
 
-fn simpleTest(alloc: Allocator, _: ArgInt) !void {
-    const a = try alloc.alloc(u8, 1000);
+fn firstAlloc(alloc: Allocator, arg: ArgInt) !void {
+    const a = try alloc.alloc(u8, arg);
     defer alloc.free(a);
 }
 
-fn manyAllocFree(alloc: Allocator, _: ArgInt) !void {
-    for (0..10_000) |_| {
-        const arr = try alloc.alloc(u32, 100);
+fn manyAllocFree(alloc: Allocator, arg: ArgInt) !void {
+    for (0..arg) |_| {
+        const arr = try alloc.alloc(u8, 100);
         alloc.free(arr);
     }
 }
@@ -97,7 +99,7 @@ fn manyAllocResizeFree(alloc: Allocator, _: ArgInt) !void {
     const rand = prng.random();
 
     for (0..10_000) |_| {
-        var arr = try alloc.alloc(u32, rand.intRangeAtMost(usize, 1, 10_000));
+        var arr = try alloc.alloc(u8, rand.intRangeAtMost(usize, 1, 10_000));
 
         const new_len = rand.intRangeAtMost(usize, 1, 10_000);
         if (alloc.resize(arr, new_len)) arr.len = new_len;
@@ -134,21 +136,12 @@ fn manyAllocRemapsFree(alloc: Allocator, _: ArgInt) !void {
     }
 }
 
-fn appendingToArrayList(alloc: Allocator, _: ArgInt) !void {
-    var arr = std.ArrayListUnmanaged(u64).empty;
-    defer arr.deinit(alloc);
+fn appendingToMultipleArrayLists(alloc: Allocator, arg: ArgInt) !void {
+    var arrs = try alloc.alloc(std.ArrayListUnmanaged(ArgInt), arg);
+    defer alloc.free(arrs);
 
-    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
-    const rand = prng.random();
-
-    for (0..10_000) |_| {
-        try arr.append(alloc, rand.int(u64));
-    }
-}
-
-fn appendingToMultipleArrayLists(alloc: Allocator, _: ArgInt) !void {
-    var arrs: [10]std.ArrayListUnmanaged(u64) = @splat(.empty);
-    defer for (&arrs) |*arr| arr.deinit(alloc);
+    @memset(arrs, .empty);
+    defer for (arrs) |*arr| arr.deinit(alloc);
 
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();

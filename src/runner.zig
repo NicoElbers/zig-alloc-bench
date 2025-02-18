@@ -11,11 +11,11 @@ pub const TestArg = union(enum) {
 
     /// The test is provided all elements in the exclusive range
     /// [start..start + n) one at a time.
-    linear: struct { start: ArgInt, n: ArgInt },
+    linear: struct { start: ArgInt = 0, n: ArgInt },
 
     /// The test is provided all elements in the sequence
-    /// [start * 2^0, start * 2^1 ... start * 2^n) one at a time.
-    exponential: struct { start: ArgInt, n: std.math.Log2Int(ArgInt) },
+    /// [start * 2^0, start * 2^1 ... start * 2^n] one at a time.
+    exponential: struct { start: ArgInt = 1, n: std.math.Log2Int(ArgInt) },
 
     pub fn iter(self: TestArg) Iter {
         return .{ .type = self };
@@ -27,14 +27,18 @@ pub const TestArg = union(enum) {
 
         pub fn next(self: *@This()) ?ArgInt {
             defer self.n += 1;
+
             return switch (self.type) {
                 .none => if (self.n == 0) @as(ArgInt, undefined) else null,
 
                 .list => |t| if (self.n < t.len) t[self.n] else null,
 
-                .linear => |t| if (self.n < t.n) t.start + t.n else null,
+                .linear => |t| if (self.n < t.n) t.start + self.n else null,
 
-                .exponential => |t| if (self.n < t.n) t.start + 1 << t.n else null,
+                .exponential => |t| if (self.n <= t.n)
+                    t.start * (@as(ArgInt, 1) << @intCast(self.n))
+                else
+                    null,
             };
         }
     };
@@ -44,14 +48,14 @@ pub const Rerun = struct {
     run_at_least: usize,
     run_for_ns: u64,
 
-    pub const testing: Rerun = .{
+    pub const once: Rerun = .{
         .run_at_least = 1,
         .run_for_ns = 0,
     };
 
     pub const default: Rerun = .{
         .run_at_least = 20,
-        .run_for_ns = std.time.ns_per_s * 5,
+        .run_for_ns = std.time.ns_per_s,
     };
 
     pub fn run(
@@ -437,7 +441,7 @@ pub fn runAll(
                     };
 
                     const rerun: Rerun = if (opts.type == .testing)
-                        .testing
+                        .once
                     else
                         test_info.rerun;
 
@@ -489,7 +493,7 @@ pub fn runAll(
                 };
 
                 const rerun: Rerun = if (opts.type == .testing)
-                    .testing
+                    .once
                 else
                     test_info.rerun;
 
