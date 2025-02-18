@@ -192,7 +192,7 @@ pub const Unit = enum {
                     break :blk value;
                 } else {
                     suffix[0] = 'x';
-                    break :blk value / 100;
+                    break :blk (value / 100) + 1;
                 }
             },
             .count, .counter => {
