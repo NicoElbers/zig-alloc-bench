@@ -161,8 +161,6 @@ pub const TestArg = union(enum) {
     };
 };
 
-pub const Profiling = statistics.Profiling;
-
 pub fn run(alloc: Allocator, opts: TestOpts) !void {
     return switch (opts.type) {
         .testing, .benchmarking => try opts.test_fn(alloc, opts.arg),
@@ -348,6 +346,33 @@ pub fn runAll(
         }
     }
 }
+
+pub const Run = struct {
+    runs: usize = 0,
+    time: Tally = .init,
+    max_rss: Tally = .init,
+    cache_misses: Tally = .init,
+
+    pub fn zonable(self: *const Run, prof: ?*const Profiling) Zonable {
+        return .{
+            .runs = self.runs,
+            .time = self.time.zonable(),
+            .max_rss = self.max_rss.zonable(),
+            .cache_misses = self.cache_misses.zonable(),
+            .profiling = if (prof) |p| p.zonable() else null,
+        };
+    }
+
+    pub const Zonable = struct {
+        runs: usize,
+        time: Tally.Zonable,
+        max_rss: Tally.Zonable,
+        cache_misses: Tally.Zonable,
+        profiling: ?Profiling.Zonable,
+    };
+
+    pub const init: Run = .{};
+};
 
 pub const Rerun = struct {
     run_at_least: usize,
@@ -652,4 +677,5 @@ const RunLogger = @import("RunLogger.zig");
 const Performance = @import("Performance.zig");
 const StatusCode = process.StatusCode;
 const Random = std.Random;
-const Run = statistics.Run;
+const Tally = statistics.Tally;
+const Profiling = profiling.Profiling;

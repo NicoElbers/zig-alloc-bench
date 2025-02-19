@@ -243,12 +243,6 @@ pub const Unit = enum {
 
         return .{ val, suffix };
     }
-
-    pub fn write(unit: @This(), writer: File, prefix: []const u8, value: f64) !void {
-        const val, const suffix = unit.convert(value);
-
-        try writer.writer().print("- {s}: {d: >6.2} {s}\n", .{ prefix, val, suffix });
-    }
 };
 
 pub const Tally = struct {
@@ -383,15 +377,6 @@ pub const LazyTally = struct {
         return self.tally.?.isValid();
     }
 
-    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, prefix: []const u8) !void {
-        if (self.tally == null) {
-            @branchHint(.unlikely);
-            return;
-        }
-
-        return self.tally.?.write(file, unit, width, prefix);
-    }
-
     pub fn zonable(self: *const LazyTally) ?Tally.Zonable {
         return if (self.tally) |t| t.zonable() else null;
     }
@@ -409,11 +394,6 @@ pub const FallableTally = struct {
         self.failure.add(value);
     }
 
-    pub fn write(self: *const @This(), file: File, unit: Unit, width: usize, comptime prefix: []const u8) !void {
-        try self.success.write(file, unit, width, prefix ++ " success");
-        try self.failure.write(file, unit, width, prefix ++ " failure");
-    }
-
     pub fn zonable(self: *const FallableTally) Zonable {
         return .{
             .success = self.success.zonable(),
@@ -429,74 +409,11 @@ pub const FallableTally = struct {
     pub const init: FallableTally = .{};
 };
 
-pub const Profiling = struct {
-    allocations: FallableTally = .init,
-    resizes: FallableTally = .init,
-    remaps: FallableTally = .init,
-    frees: LazyTally = .init,
-
-    pub fn zonable(self: *const Profiling) Zonable {
-        const allocations = self.allocations.zonable();
-        const resizes = self.resizes.zonable();
-        const remaps = self.remaps.zonable();
-
-        return .{
-            .allocations = allocations.success,
-            .resizes_success = resizes.success,
-            .resizes_failure = resizes.failure,
-            .remaps_success = remaps.success,
-            .remaps_failure = remaps.failure,
-            .frees = self.frees.zonable(),
-        };
-    }
-
-    pub const Zonable = struct {
-        allocations: ?Tally.Zonable,
-        resizes_success: ?Tally.Zonable,
-        resizes_failure: ?Tally.Zonable,
-        remaps_success: ?Tally.Zonable,
-        remaps_failure: ?Tally.Zonable,
-        frees: ?Tally.Zonable,
-    };
-
-    pub const init: Profiling = .{};
-};
-
-pub const Run = struct {
-    runs: usize = 0,
-    time: Tally = .init,
-    max_rss: Tally = .init,
-    cache_misses: Tally = .init,
-
-    // FIXME: Create some 'full run' struct that includes profiling, opts everything
-    pub fn zonable(self: *const Run, profiling: ?*const Profiling) Zonable {
-        return .{
-            .runs = self.runs,
-            .time = self.time.zonable(),
-            .max_rss = self.max_rss.zonable(),
-            .cache_misses = self.cache_misses.zonable(),
-            .profiling = if (profiling) |p| p.zonable() else null,
-        };
-    }
-
-    pub const Zonable = struct {
-        runs: usize,
-        time: Tally.Zonable,
-        max_rss: Tally.Zonable,
-        cache_misses: Tally.Zonable,
-        profiling: ?Profiling.Zonable,
-    };
-
-    pub const init: Run = .{};
-};
-
 const std = @import("std");
 const runner = @import("runner.zig");
 
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const TestOpts = runner.TestOpts;
-
-const File = std.fs.File;
 
 const assert = std.debug.assert;

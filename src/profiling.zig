@@ -1,3 +1,36 @@
+pub const Profiling = struct {
+    allocations: FallableTally = .init,
+    resizes: FallableTally = .init,
+    remaps: FallableTally = .init,
+    frees: LazyTally = .init,
+
+    pub fn zonable(self: *const Profiling) Zonable {
+        const allocations = self.allocations.zonable();
+        const resizes = self.resizes.zonable();
+        const remaps = self.remaps.zonable();
+
+        return .{
+            .allocations = allocations.success,
+            .resizes_success = resizes.success,
+            .resizes_failure = resizes.failure,
+            .remaps_success = remaps.success,
+            .remaps_failure = remaps.failure,
+            .frees = self.frees.zonable(),
+        };
+    }
+
+    pub const Zonable = struct {
+        allocations: ?Tally.Zonable,
+        resizes_success: ?Tally.Zonable,
+        resizes_failure: ?Tally.Zonable,
+        remaps_success: ?Tally.Zonable,
+        remaps_failure: ?Tally.Zonable,
+        frees: ?Tally.Zonable,
+    };
+
+    pub const init: Profiling = .{};
+};
+
 /// A allocator that records data about all allocations, resizes and frees passing
 /// through it. It provides methods to dump all it's metadata into a given file.
 ///
@@ -103,7 +136,7 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const Performance = @import("Performance.zig");
 const Alignment = std.mem.Alignment;
 const Tally = statistics.Tally;
+const LazyTally = statistics.LazyTally;
 const FallableTally = statistics.FallableTally;
-const Profiling = statistics.Profiling;
 
 const assert = std.debug.assert;

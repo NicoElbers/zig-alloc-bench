@@ -741,6 +741,7 @@ const std = @import("std");
 const buitin = @import("builtin");
 const runner = @import("runner.zig");
 const statistics = @import("statistics.zig");
+const profiling = @import("profiling.zig");
 
 const assert = std.debug.assert;
 
@@ -755,9 +756,9 @@ const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
 const StatsRet = runner.StatsRet;
 const TestArg = runner.TestArg;
-const Profiling = runner.Profiling;
+const Profiling = profiling.Profiling;
 const TestOpts = runner.TestOpts;
 const File = std.fs.File;
-const Run = statistics.Run;
+const Run = runner.Run;
 const Tally = statistics.Tally;
 const Unit = statistics.Unit;
