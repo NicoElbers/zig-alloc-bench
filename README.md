@@ -5,17 +5,20 @@ This repository aims to test different allocators for the Zig language. Eventual
 # Roadmap, in no particular order
 
 - [ ] A single to command to download binaries of well known allocators
-- [ ] An easy to extend set of allocator configurations
-- [ ] An easy to extend set of allocator correctness tests
-- [ ] An easy to extend set of allocator benchmarks
+- [x] An easy to extend set of allocator configurations
+- [x] An easy to extend set of allocator correctness tests
+- [x] An easy to extend set of allocator benchmarks
+- [ ] An extensive set of allocator configurations
+- [ ] An extensive set of allocator correctness tests
+- [ ] An extensive set of allocator benchmarks
 - [ ] A fuzzing infrastructure for allocator correctness
 - [ ] An extensive set of allocator profiling tools
-- [ ] A (likely json, or zon when that merges) schema to represent a run of allocator benchmarks
+- [x] A zon schema to represent a run of allocator benchmarks
 - [ ] A way to generate a graph for allocator performance over versions
 - [ ] A web interface to visualize and compare different allocators
 - A Zig package that exports:
   - [ ] A function to test correctness of an allocator
-  - [ ] A function to benchmark an allocator, in a way comparable to in tree benchmarks
+  - [x] A function to benchmark an allocator, in a way comparable to in tree benchmarks
 - [ ] 1 bug found in an existing allocator
 
 # Limitations
