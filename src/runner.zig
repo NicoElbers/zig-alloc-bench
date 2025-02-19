@@ -176,7 +176,8 @@ pub fn run(alloc: Allocator, opts: TestOpts) !void {
 
 pub const Opts = struct {
     type: Type,
-    filter: ?[]const u8 = null,
+    test_whitelist: ?[]const []const u8 = null,
+    constr_whitelist: ?[]const []const u8 = null,
     min_runtime_ns: u64 = std.time.ns_per_s * 5,
     tty: std.io.tty.Config = .escape_codes,
     prefix: [:0]const u8 = "runs",
@@ -205,9 +206,9 @@ pub fn runAll(
     });
     defer logger.finish(alloc) catch |err| @panic(@errorName(err));
 
-    // TODO: Ugly
-    const filter: Filter = .init(if (opts.filter) |f| &.{f} else null, null, .{
+    const filter: Filter = .init(opts.test_whitelist, opts.constr_whitelist, .{
         .type = opts.type,
+        // TODO: wut?
         .meta = true,
     });
 
@@ -596,7 +597,7 @@ const Filter = struct {
         // Whitelist
         if (self.test_whitelist) |whitelist| {
             for (whitelist) |item|
-                if (!std.mem.eql(u8, item, test_info.name)) return true;
+                if (!std.ascii.eqlIgnoreCase(item, test_info.name)) return true;
         }
 
         return false;
@@ -618,7 +619,7 @@ const Filter = struct {
         // Whitelist
         if (self.constr_whitelist) |whitelist| {
             for (whitelist) |item|
-                if (!std.mem.eql(u8, item, constr_info.name)) return true;
+                if (!std.ascii.eqlIgnoreCase(item, constr_info.name)) return true;
         }
 
         return false;

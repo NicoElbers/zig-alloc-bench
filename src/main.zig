@@ -84,13 +84,22 @@ pub fn parseArgs(alloc: Allocator, default: RunOpts) !RunOpts {
 
     var opts = default;
 
+    var test_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer test_names.deinit(alloc);
+
+    var constructor_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer constructor_names.deinit(alloc);
+
     while (args.next()) |arg| {
         if (eql(u8, arg, "--type") or eql(u8, arg, "-t")) {
             const val = args.next() orelse fatal(arg, .{ .needs_arg = Opts.Type });
             opts.type = std.meta.stringToEnum(Opts.Type, val) orelse fatal(arg, .{ .invalid = Opts.Type });
-        } else if (eql(u8, arg, "--filter") or eql(u8, arg, "-f")) {
+        } else if (eql(u8, arg, "--test") or eql(u8, arg, "-tst")) {
             const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
-            opts.filter = val;
+            try test_names.append(alloc, val);
+        } else if (eql(u8, arg, "--constr") or eql(u8, arg, "-c")) {
+            const val = args.next() orelse fatal(arg, .{ .needs_arg = []const u8 });
+            try constructor_names.append(alloc, val);
         } else if (eql(u8, arg, "--tty")) {
             const val = args.next() orelse fatal(arg, .{ .needs_arg = std.io.tty.Config });
             if (eql(u8, val, "no_color")) {
@@ -109,6 +118,14 @@ pub fn parseArgs(alloc: Allocator, default: RunOpts) !RunOpts {
         } else if (eql(u8, arg, "--debug") or eql(u8, arg, "-d")) {
             opts.debug = true;
         } else fatal(arg, .{ .unknown = enum { type, filter, tty, prefix, dry, min_time } });
+    }
+
+    if (test_names.items.len > 0) {
+        opts.test_whitelist = try test_names.toOwnedSlice(alloc);
+    }
+
+    if (constructor_names.items.len > 0) {
+        opts.constr_whitelist = try constructor_names.toOwnedSlice(alloc);
     }
 
     return opts;
