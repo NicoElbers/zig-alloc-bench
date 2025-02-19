@@ -12,28 +12,31 @@ pub const default = [_]TestInformation{
         .name = "Many allocations and frees",
         .test_fn = &manyAllocFree,
         .timeout_ns = std.time.ns_per_s,
-        .arg = .{ .exponential = .{ .start = 1 << 13, .n = 7 } },
+        .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
     },
     .{
         .name = "Many allocations, resizes and frees",
-        .timeout_ns = std.time.ns_per_s,
         .test_fn = &manyAllocResizeFree,
+        .timeout_ns = std.time.ns_per_s,
+        .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
     },
     .{
         .name = "Many allocations, remaps and frees",
-        .timeout_ns = std.time.ns_per_s * 2,
         .test_fn = &manyAllocRemapsFree,
+        .timeout_ns = std.time.ns_per_s * 2,
+        .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
     },
     .{
         .name = "Appending to many arraylists",
         .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendingToMultipleArrayLists,
-        .arg = .{ .exponential = .{ .n = 5 } },
+        .arg = .{ .exponential = .{ .start = 1, .n = 10 } },
     },
     .{
         .name = "Random access append",
         .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendAccessArray,
+        .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
     },
     .{
         .name = "No free",
@@ -73,7 +76,7 @@ pub const default = [_]TestInformation{
             .testing = true,
         },
         .rerun = .once,
-        .test_fn = &alignment,
+        .test_fn = &alignmentFn,
     },
     .{
         .name = "Aligned allocs",
@@ -88,40 +91,48 @@ fn firstAlloc(alloc: Allocator, arg: ArgInt) !void {
 }
 
 fn manyAllocFree(alloc: Allocator, arg: ArgInt) !void {
-    for (0..arg) |_| {
-        const arr = try alloc.alloc(u8, 100);
-        alloc.free(arr);
-    }
-}
-
-fn manyAllocResizeFree(alloc: Allocator, _: ArgInt) !void {
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();
 
     for (0..10_000) |_| {
-        var arr = try alloc.alloc(u8, rand.intRangeAtMost(usize, 1, 10_000));
+        const arr = try allocRange(u8, rand, alloc, 1, arg);
+        alloc.free(arr);
+    }
+}
 
-        const new_len = rand.intRangeAtMost(usize, 1, 10_000);
+fn manyAllocResizeFree(alloc: Allocator, arg: ArgInt) !void {
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    for (0..10_000) |_| {
+        var arr = try allocRange(u8, rand, alloc, 1, arg);
+        touchAllocation(rand, arr);
+
+        const new_len = rand.intRangeAtMost(usize, 1, arg);
         if (alloc.resize(arr, new_len)) arr.len = new_len;
 
+        touchAllocation(rand, arr);
+
         alloc.free(arr);
     }
 }
 
-fn manyAllocRemapsFree(alloc: Allocator, _: ArgInt) !void {
+fn manyAllocRemapsFree(alloc: Allocator, arg: ArgInt) !void {
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();
 
     for (0..10_000) |_| {
-        const arr = try alloc.alloc(u64, rand.intRangeAtMost(usize, 1, 10_000));
+        const arr = try allocRange(u8, rand, alloc, 1, arg);
 
-        @memset(arr, rand.int(u64));
+        touchAllocation(rand, arr);
 
-        const new_len = rand.intRangeAtMost(usize, 1, 10_000);
+        const new_len = rand.intRangeAtMost(usize, 1, arg);
         const arr2 = alloc.remap(arr, new_len) orelse blk: {
             defer alloc.free(arr);
 
-            const arr2 = try alloc.alloc(u64, new_len);
+            // remap indicated that alloc, copy, free is faster
+
+            const arr2 = try alloc.alloc(u8, new_len);
 
             const min_len = @min(arr2.len, arr.len);
 
@@ -129,8 +140,9 @@ fn manyAllocRemapsFree(alloc: Allocator, _: ArgInt) !void {
             break :blk arr2;
         };
 
+        // Touch the new part of the buffer
         if (arr2.len > arr.len)
-            @memset(arr2[arr.len..], rand.int(u64));
+            touchAllocation(rand, arr2[arr.len..]);
 
         alloc.free(arr2);
     }
@@ -152,7 +164,7 @@ fn appendingToMultipleArrayLists(alloc: Allocator, arg: ArgInt) !void {
     }
 }
 
-fn appendAccessArray(alloc: Allocator, _: ArgInt) !void {
+fn appendAccessArray(alloc: Allocator, arg: ArgInt) !void {
     const Action = enum { append, access };
 
     var arr: std.ArrayListUnmanaged(u64) = .empty;
@@ -163,7 +175,7 @@ fn appendAccessArray(alloc: Allocator, _: ArgInt) !void {
 
     try arr.append(alloc, 0xdeadbeef);
 
-    for (0..10_000) |_| {
+    for (0..arg) |_| {
         switch (rand.enumValue(Action)) {
             .access => {
                 const arr_idx = rand.intRangeAtMost(u64, 0, arr.items.len - 1);
@@ -207,7 +219,7 @@ const Types = [_]type{
     usize,         *u8,
 };
 
-fn alignment(alloc: Allocator, _: ArgInt) !void {
+fn alignmentFn(alloc: Allocator, _: ArgInt) !void {
     inline for (Types) |T| {
         var ptrs: [repetitions]*T = undefined;
 
@@ -235,7 +247,7 @@ fn alignment(alloc: Allocator, _: ArgInt) !void {
     }
 }
 
-const Alignments = [_]std.mem.Alignment{
+const Alignments = [_]Alignment{
     .@"1",
     .@"2",
     .@"4",
@@ -256,11 +268,14 @@ fn alignedAllocs(alloc: Allocator, _: ArgInt) !void {
         inline for (Alignments) |alignm| {
             var ptrs: [repetitions][]align(alignm.toByteUnits()) T = undefined;
 
+            var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+            const rand = prng.random();
+
             for (0..repetitions) |i| {
-                const arr = try alloc.alignedAlloc(T, @intCast(alignm.toByteUnits()), 123);
+                const arr = try allocAlignedRange(T, rand, alloc, alignm, 1, 1_000);
                 ptrs[i] = arr;
 
-                @memset(arr, undefined);
+                touchAllocation(rand, arr);
 
                 try std.testing.expect(@intFromPtr(arr.ptr) % alignm.toByteUnits() == 0);
             }
@@ -270,8 +285,47 @@ fn alignedAllocs(alloc: Allocator, _: ArgInt) !void {
     }
 }
 
+// ---- Common functions ----
+
+/// Minially touch an allocation, to ensure it actually exists, but to influence
+/// time as little as possible
+inline fn touchAllocation(rand: Random, allocation: anytype) void {
+    const info = @typeInfo(@TypeOf(allocation)).pointer;
+
+    if (@typeInfo(info.child) != .int) {
+        switch (info.size) {
+            .one => allocation.* = undefined,
+            .slice => {
+                allocation[0] = undefined;
+                allocation[allocation.len - 1] = undefined;
+            },
+            else => comptime unreachable,
+        }
+        return;
+    }
+
+    switch (info.size) {
+        .one => allocation.* = rand.int(info.child),
+        .slice => {
+            allocation[0] = rand.int(info.child);
+            allocation[allocation.len - 1] = rand.int(info.child);
+        },
+        else => comptime unreachable,
+    }
+}
+
+inline fn allocRange(comptime T: type, rand: Random, alloc: Allocator, min: usize, max: usize) ![]T {
+    return alloc.alloc(T, rand.intRangeAtMost(usize, min, max));
+}
+
+inline fn allocAlignedRange(comptime T: type, rand: Random, alloc: Allocator, comptime alignment: Alignment, min: usize, max: usize) ![]align(alignment.toByteUnits()) T {
+    return alloc.alignedAlloc(T, alignment.toByteUnits(), rand.intRangeAtMost(usize, min, max));
+}
+
 const std = @import("std");
 const runner = @import("runner");
 const Allocator = std.mem.Allocator;
 const TestInformation = runner.TestInformation;
 const ArgInt = runner.TestArg.ArgInt;
+const Random = std.Random;
+const Alignment = std.mem.Alignment;
