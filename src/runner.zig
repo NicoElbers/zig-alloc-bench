@@ -595,9 +595,12 @@ const Filter = struct {
         if (test_chars.testing and self.opts.type != .testing) return true;
 
         // Whitelist
-        if (self.test_whitelist) |whitelist| {
-            for (whitelist) |item|
-                if (!std.ascii.eqlIgnoreCase(item, test_info.name)) return true;
+        if (self.test_whitelist) |whitelist| blk: {
+            for (whitelist) |item| {
+                if (std.ascii.eqlIgnoreCase(item, test_info.name))
+                    break :blk;
+            }
+            return true;
         }
 
         return false;
@@ -617,9 +620,12 @@ const Filter = struct {
         if (test_chars.meta and !self.opts.meta) return true;
 
         // Whitelist
-        if (self.constr_whitelist) |whitelist| {
-            for (whitelist) |item|
-                if (!std.ascii.eqlIgnoreCase(item, constr_info.name)) return true;
+        if (self.constr_whitelist) |whitelist| blk: {
+            for (whitelist) |item| {
+                if (std.ascii.eqlIgnoreCase(item, constr_info.name))
+                    break :blk;
+            }
+            return true;
         }
 
         return false;
