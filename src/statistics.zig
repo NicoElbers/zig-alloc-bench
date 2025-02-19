@@ -436,18 +436,26 @@ pub const Profiling = struct {
     frees: LazyTally = .init,
 
     pub fn zonable(self: *const Profiling) Zonable {
+        const allocations = self.allocations.zonable();
+        const resizes = self.resizes.zonable();
+        const remaps = self.remaps.zonable();
+
         return .{
-            .allocations = self.allocations.zonable(),
-            .resizes = self.resizes.zonable(),
-            .remaps = self.remaps.zonable(),
+            .allocations = allocations.success,
+            .resizes_success = resizes.success,
+            .resizes_failure = resizes.failure,
+            .remaps_success = remaps.success,
+            .remaps_failure = remaps.failure,
             .frees = self.frees.zonable(),
         };
     }
 
     pub const Zonable = struct {
-        allocations: FallableTally.Zonable,
-        resizes: FallableTally.Zonable,
-        remaps: FallableTally.Zonable,
+        allocations: ?Tally.Zonable,
+        resizes_success: ?Tally.Zonable,
+        resizes_failure: ?Tally.Zonable,
+        remaps_success: ?Tally.Zonable,
+        remaps_failure: ?Tally.Zonable,
         frees: ?Tally.Zonable,
     };
 

@@ -263,7 +263,7 @@ pub fn ChunkIter(comptime T: type) type {
     };
 }
 
-const prefix_len = " cache_misses |".len;
+const prefix_len = " resizes_success |".len;
 const tally_len = 24;
 
 pub fn finishArgument(self: *const Self, arg_run: *ArgRun) !void {
@@ -302,16 +302,8 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
     const first = first_run;
 
     try writer.writeAll("\n");
-    {
-        var counter = std.io.countingWriter(writer);
-        const inner_writer = counter.writer();
 
-        try color.setColor(writer, .dim);
-        try inner_writer.writeAll(" name");
-        try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
-        try writer.writeAll("|");
-        try color.setColor(writer, .reset);
-    }
+    try prefix("name");
 
     // Allocator names
     {
@@ -329,6 +321,7 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
         try writer.writeAll("\n");
     }
 
+    // Normal tallies
     inline for (.{
         .{ "time", Unit.time },
         .{ "max_rss", Unit.memory },
@@ -337,50 +330,37 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
         const tally_name: []const u8, const unit: Unit = stat;
         const first_tally = @field(first.run, tally_name);
 
-        // Seperating line
+        try seperatingLine(chunk.len);
+
+        try prefix(tally_name);
+
+        // Outliers
         {
-            try color.setColor(writer, .dim);
-            try writer.writeByteNTimes('-', prefix_len - 1);
-            try writer.writeAll("+");
+            for (chunk) |run| {
+                var counter = std.io.countingWriter(writer);
+                const inner_writer = counter.writer();
 
-            for (chunk) |_| {
-                try writer.writeByteNTimes('-', tally_len);
-                try writer.writeAll("+");
-            }
-            try writer.writeAll("\n");
-        }
+                const tally = @field(run.run, tally_name);
 
-        // prefix
-        {
-            var counter = std.io.countingWriter(writer);
-            const inner_writer = counter.writer();
+                if (tally.outliers > 10) {
+                    try color.setColor(writer, .reset);
+                    try color.setColor(writer, .bright_yellow);
+                } else {
+                    try color.setColor(writer, .dim);
+                }
 
-            try color.setColor(writer, .dim);
-            try inner_writer.writeAll(" ");
-            try inner_writer.writeAll(tally_name);
+                try inner_writer.print(" outliers {d: >3.0}% ", .{tally.outliers});
 
-            try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
-            try writer.writeAll("|");
+                try color.setColor(writer, .reset);
+                try color.setColor(writer, .dim);
 
-            for (chunk) |_| {
-                try writer.writeByteNTimes(' ', tally_len);
+                try writer.writeByteNTimes(' ', tally_len - counter.bytes_written);
                 try writer.writeAll("|");
             }
             try writer.writeAll("\n");
         }
 
-        // Seperating line
-        {
-            try color.setColor(writer, .dim);
-            try writer.writeByteNTimes('-', prefix_len - 1);
-            try writer.writeAll("+");
-
-            for (chunk) |_| {
-                try writer.writeByteNTimes('-', tally_len);
-                try writer.writeAll("+");
-            }
-            try writer.writeAll("\n");
-        }
+        try seperatingLine(chunk.len);
 
         inline for (.{
             "min",
@@ -396,64 +376,177 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
 
                 // prefix
                 if (i == 0) {
-                    var counter = std.io.countingWriter(writer);
-                    const inner_writer = counter.writer();
-
-                    try color.setColor(writer, .dim);
-                    try inner_writer.writeAll(" ");
-                    try inner_writer.writeAll(field);
-
-                    try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
-                    try writer.writeAll("|");
-                    try color.setColor(writer, .reset);
+                    try prefix(field);
                 }
-
-                var counter = std.io.countingWriter(writer);
-                const inner_writer = counter.writer();
 
                 const current_v = @field(tally, field);
 
-                // Actual value
-                {
-                    const value, const suffix = unit.convert(@field(tally, field));
-
-                    try color.setColor(writer, .green);
-                    try inner_writer.print(" {d: >6.2} ", .{value});
-                    try color.setColor(writer, .reset);
-                    try color.setColor(writer, .dim);
-                    try inner_writer.writeAll(&suffix);
-                    try color.setColor(writer, .reset);
-                }
-
-                try inner_writer.writeByteNTimes(' ', 2);
-
-                // Delta
-                {
-                    const percent = ((current_v - first_v) / first_v) * 100;
-                    const value, const suffix = Unit.percent.convert(@abs(percent));
-
-                    try color.setColor(writer, if (percent < -1)
-                        .bright_green
-                    else if (percent > 1)
-                        .bright_red
-                    else
-                        .dim);
-                    try inner_writer.writeAll(if (percent < 0) "-" else "+");
-                    try inner_writer.print("{d: >6.2} ", .{value});
-                    try inner_writer.writeAll(suffix[0..1]);
-                    try color.setColor(writer, .reset);
-                }
-
-                try inner_writer.writeByteNTimes(' ', tally_len -| counter.bytes_written);
-
-                try color.setColor(writer, .dim);
-                try writer.writeAll("|");
-                try color.setColor(writer, .reset);
+                try printValues(unit, first_v, current_v);
             }
             try writer.writeAll("\n");
         }
     }
 
+    // Profiling
+    inline for (.{
+        "allocations",
+        "resizes_success",
+        "resizes_failure",
+        "remaps_success",
+        "remaps_failure",
+        "frees",
+    }) |tally_name| {
+        const maybe_first_tally = blk: {
+            for (chunk) |run| {
+                break :blk @field(run.run.profiling.?, tally_name) orelse continue;
+            }
+
+            break :blk null;
+        };
+
+        if (maybe_first_tally) |first_tally| {
+            try seperatingLine(chunk.len);
+
+            try prefix(tally_name);
+
+            // Outliers
+            {
+                for (chunk) |run| {
+                    var counter = std.io.countingWriter(writer);
+                    const inner_writer = counter.writer();
+
+                    const maybe_tally = @field(run.run.profiling.?, tally_name);
+
+                    if (maybe_tally) |tally| {
+                        if (tally.outliers > 10) {
+                            try color.setColor(writer, .reset);
+                            try color.setColor(writer, .bright_yellow);
+                        } else {
+                            try color.setColor(writer, .dim);
+                        }
+
+                        try inner_writer.print(" outliers {d: >3.0}% ", .{tally.outliers});
+
+                        try color.setColor(writer, .reset);
+                        try color.setColor(writer, .dim);
+                    }
+
+                    try writer.writeByteNTimes(' ', tally_len - counter.bytes_written);
+                    try writer.writeAll("|");
+                }
+                try writer.writeAll("\n");
+            }
+
+            try seperatingLine(chunk.len);
+
+            inline for (.{
+                "min",
+                "p50",
+                "p90",
+                "p99",
+                "max",
+            }) |field| {
+                const first_v = @field(first_tally, field);
+
+                for (chunk, 0..) |run, i| {
+                    // prefix
+                    if (i == 0) {
+                        try prefix(field);
+                    }
+
+                    const tally = @field(run.run.profiling.?, tally_name) orelse {
+                        try writer.writeByteNTimes(' ', tally_len);
+                        try writer.writeAll("|");
+                        continue;
+                    };
+                    const current_v = @field(tally, field);
+
+                    try printValues(.time, first_v, current_v);
+                }
+                try writer.writeAll("\n");
+            }
+        }
+    }
+
+    try writer.writeAll("\n");
+}
+
+fn printValues(unit: Unit, first_v: f64, current_v: f64) !void {
+    const stdout = std.io.getStdOut();
+    const color = std.io.tty.detectConfig(stdout);
+    const writer = stdout.writer();
+
+    var counter = std.io.countingWriter(writer);
+    const inner_writer = counter.writer();
+
+    // Actual value
+    {
+        const value, const suffix = unit.convert(current_v);
+
+        try color.setColor(writer, .green);
+        try inner_writer.print(" {d: >6.2} ", .{value});
+        try color.setColor(writer, .reset);
+        try color.setColor(writer, .dim);
+        try inner_writer.writeAll(&suffix);
+        try color.setColor(writer, .reset);
+    }
+
+    try inner_writer.writeByteNTimes(' ', 2);
+
+    // Delta
+    {
+        const percent = ((current_v - first_v) / first_v) * 100;
+        const value, const suffix = Unit.percent.convert(@abs(percent));
+
+        try color.setColor(writer, if (percent < -1)
+            .bright_green
+        else if (percent > 1)
+            .bright_red
+        else
+            .dim);
+        try inner_writer.writeAll(if (percent < 0) "-" else "+");
+        try inner_writer.print("{d: >6.2} ", .{value});
+        try inner_writer.writeAll(suffix[0..1]);
+        try color.setColor(writer, .reset);
+    }
+
+    try inner_writer.writeByteNTimes(' ', tally_len -| counter.bytes_written);
+
+    try color.setColor(writer, .dim);
+    try writer.writeAll("|");
+    try color.setColor(writer, .reset);
+}
+
+fn prefix(prefix_str: []const u8) !void {
+    const stdout = std.io.getStdOut();
+    const color = std.io.tty.detectConfig(stdout);
+    const writer = stdout.writer();
+
+    var counter = std.io.countingWriter(writer);
+    const inner_writer = counter.writer();
+
+    try color.setColor(writer, .dim);
+    try inner_writer.writeAll(" ");
+    try inner_writer.writeAll(prefix_str);
+
+    try writer.writeByteNTimes(' ', prefix_len - counter.bytes_written - 1);
+    try writer.writeAll("|");
+    try color.setColor(writer, .reset);
+}
+
+fn seperatingLine(chunk_len: usize) !void {
+    const stdout = std.io.getStdOut();
+    const color = std.io.tty.detectConfig(stdout);
+    const writer = stdout.writer();
+
+    try color.setColor(writer, .dim);
+    try writer.writeByteNTimes('-', prefix_len - 1);
+    try writer.writeAll("+");
+
+    for (0..chunk_len) |_| {
+        try writer.writeByteNTimes('-', tally_len);
+        try writer.writeAll("+");
+    }
     try writer.writeAll("\n");
 }
 
