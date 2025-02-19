@@ -73,9 +73,9 @@ fn fatal(arg: []const u8, comptime typ: union(enum) {
 }
 
 // TODO: Ugly, create or find a library for this
-pub fn parseArgs(alloc: Allocator, default: RunOpts) !RunOpts {
+pub fn parseArgs(alloc: Allocator, default: Config) !Config {
     const eql = std.mem.eql;
-    const Opts = runner.Opts;
+    const Opts = runner.Config;
 
     var args = try std.process.argsWithAllocator(alloc);
     defer args.deinit();
@@ -158,10 +158,5 @@ const constructors = @import("constructors");
 
 const assert = std.debug.assert;
 
-const Profiling = runner.Profiling;
 const Allocator = std.mem.Allocator;
-const TestFn = runner.TestFn;
-const TestInformation = runner.TestInformation;
-const ContructorInformation = runner.ContructorInformation;
-const File = std.fs.File;
-const RunOpts = runner.Opts;
+const Config = runner.Config;

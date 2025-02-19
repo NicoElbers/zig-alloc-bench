@@ -133,7 +133,7 @@ fn forkChildErrReport(file: File, err: anyerror) noreturn {
     // which we really do not want to run in the fork child. I caught LLVM doing this and
     // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
     // "Why'd you have to go and make things so complicated?"
-    if (builtin.link_libc) {
+    if (link_libc) {
         // The _exit(2) function does nothing but make the exit syscall, unlike exit(3)
         std.c._exit(1);
     }
@@ -343,8 +343,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
-
-const PERF = linux.PERF;
 
 const native_os = builtin.os.tag;
 const link_libc = builtin.link_libc;

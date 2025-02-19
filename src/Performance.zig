@@ -163,4 +163,3 @@ const assert = std.debug.assert;
 const native_os = builtin.os.tag;
 
 const Timer = time.Timer;
-const Profiling = runner.Profiling;

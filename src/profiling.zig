@@ -127,13 +127,8 @@ pub const ProfilingAllocator = struct {
 const std = @import("std");
 const statistics = @import("statistics.zig");
 
-const File = std.fs.File;
 const Allocator = std.mem.Allocator;
 const Timer = std.time.Timer;
-const HashMap = std.AutoHashMapUnmanaged;
-const ArrayList = std.ArrayListUnmanaged;
-const ArenaAllocator = std.heap.ArenaAllocator;
-const Performance = @import("Performance.zig");
 const Alignment = std.mem.Alignment;
 const Tally = statistics.Tally;
 const LazyTally = statistics.LazyTally;

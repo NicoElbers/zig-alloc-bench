@@ -104,7 +104,7 @@ pub const Opts = struct {
     cli: bool = true,
     disk: bool = true,
     prefix: [:0]const u8 = "runs",
-    type: RunOpts.Type,
+    type: Config.Type,
 };
 
 pub fn init(alloc: Allocator, opts: Opts) !Self {
@@ -596,7 +596,7 @@ pub fn runTimeout(self: *Self) !void {
     try color.setColor(writer, .reset);
 }
 
-pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void {
+pub fn runFail(self: *Self, reason: []const u8, code: u32) !void {
     self.fail_count += 1;
 
     if (!self.opts.cli) return;
@@ -608,12 +608,6 @@ pub fn runFail(self: *Self, ret: ?StatsRet, reason: []const u8, code: u32) !void
     try color.setColor(writer, .red);
     try writer.print("Failure\n", .{});
     try color.setColor(writer, .reset);
-
-    if (ret) |r| {
-        try dumpFile("stdout", r.stdout, stderr);
-        try dumpFile("stderr", r.stderr, stderr);
-        try dumpFile("Error", r.err_pipe, stderr);
-    }
 
     try color.setColor(writer, .red);
     try writer.print("Failed due to {s} ({d})\n", .{ reason, code });
@@ -746,19 +740,13 @@ const profiling = @import("profiling.zig");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
-// FIXME: This module should probably not depend on the runner, the other
-// way around feels better, but then I don't clearly see how I get RunStats in here
-// rethink this when the entire codebase is in a better state.
-// - An idea maybe is to have configuration be it's own module, which defines both
-//   these
-const RunOpts = runner.Opts;
+const Config = runner.Config;
+const Run = runner.Run;
+const TestOpts = runner.TestOpts;
+const TestArg = runner.TestArg;
 const TestInformation = runner.TestInformation;
 const ContructorInformation = runner.ContructorInformation;
-const StatsRet = runner.StatsRet;
-const TestArg = runner.TestArg;
 const Profiling = profiling.Profiling;
-const TestOpts = runner.TestOpts;
 const File = std.fs.File;
-const Run = runner.Run;
 const Tally = statistics.Tally;
 const Unit = statistics.Unit;

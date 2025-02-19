@@ -410,10 +410,5 @@ pub const FallableTally = struct {
 };
 
 const std = @import("std");
-const runner = @import("runner.zig");
-
-const TestInformation = runner.TestInformation;
-const ContructorInformation = runner.ContructorInformation;
-const TestOpts = runner.TestOpts;
 
 const assert = std.debug.assert;

@@ -1,7 +1,7 @@
 pub const TestFn = *const fn (Allocator, TestArg.ArgInt) anyerror!void;
 
 pub const TestOpts = struct {
-    type: Opts.Type,
+    type: Config.Type,
 
     arg: TestArg.ArgInt,
 
@@ -21,7 +21,7 @@ pub const TestOpts = struct {
     }
 
     pub const Zonable = struct {
-        type: Opts.Type,
+        type: Config.Type,
         timeout_ns: ?u64,
         arg: ?usize,
     };
@@ -172,7 +172,7 @@ pub fn run(alloc: Allocator, opts: TestOpts) !void {
     };
 }
 
-pub const Opts = struct {
+pub const Config = struct {
     type: Type,
     test_whitelist: ?[]const []const u8 = null,
     constr_whitelist: ?[]const []const u8 = null,
@@ -194,7 +194,7 @@ pub fn runAll(
     alloc: Allocator,
     tests: []const TestInformation,
     constrs: []const ContructorInformation,
-    opts: Opts,
+    opts: Config,
 ) !void {
     var logger: RunLogger = try .init(alloc, .{
         .type = opts.type,
@@ -303,7 +303,7 @@ pub fn runAll(
                         switch (test_info.charactaristics.failure) {
                             .no_failure => {},
                             .any_failure, .term => {
-                                try logger.runFail(null, "Success", 0);
+                                try logger.runFail("Success", 0);
                                 continue :constrs;
                             },
                         }
@@ -338,8 +338,12 @@ pub fn runAll(
                                 continue :constrs;
                             } else "Incorrect error",
                         };
+                        const stderr = std.io.getStdErr();
 
-                        try logger.runFail(stats, reason, stats.term.code());
+                        try logger.runFail(reason, stats.term.code());
+                        try dumpFile("stdout", stats.stdout, stderr);
+                        try dumpFile("stderr", stats.stderr, stderr);
+                        try dumpFile("Error", stats.err_pipe, stderr);
                     },
                 }
             }
@@ -576,7 +580,7 @@ fn requiresAllocator(T: type) bool {
 }
 
 const FilterOpts = struct {
-    type: Opts.Type,
+    type: Config.Type,
     meta: bool,
 };
 
@@ -657,25 +661,50 @@ const Filter = struct {
     }
 };
 
+fn dumpFile(file_name: []const u8, read: File, write: File) !void {
+    const color = std.io.tty.detectConfig(write);
+    const writer = write.writer();
+
+    var buf: [1024]u8 = undefined;
+
+    var written_anything = false;
+    while (true) {
+        const amt = read.read(&buf) catch |err| switch (err) {
+            error.WouldBlock => break,
+            else => return err,
+        };
+        if (amt == 0) break;
+        defer written_anything = true;
+
+        if (!written_anything) {
+            try color.setColor(writer, .bold);
+            try writer.print("----- {s} ----\n", .{file_name});
+            try color.setColor(writer, .reset);
+        }
+
+        try writer.writeAll(buf[0..amt]);
+    }
+
+    if (written_anything) {
+        try color.setColor(writer, .bold);
+        try writer.print("----- {s} ----\n\n", .{file_name});
+        try color.setColor(writer, .reset);
+    }
+}
+
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
 const profiling = @import("profiling.zig");
 const process = @import("process.zig");
-const builtin = @import("builtin");
 const statistics = @import("statistics.zig");
 
 const assert = std.debug.assert;
 
-const native_os = builtin.os.tag;
-
 const File = std.fs.File;
 const Allocator = std.mem.Allocator;
-const ArenaAllocator = std.heap.ArenaAllocator;
 const ProfilingAllocator = profiling.ProfilingAllocator;
 const RunLogger = @import("RunLogger.zig");
 const Performance = @import("Performance.zig");
 const StatusCode = process.StatusCode;
-const Random = std.Random;
 const Tally = statistics.Tally;
 const Profiling = profiling.Profiling;
