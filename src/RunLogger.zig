@@ -162,7 +162,6 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     self.* = undefined;
 }
 
-// TODO: Maybe print characteristics here in the future
 pub fn startTest(self: *Self, alloc: Allocator, test_info: TestInformation) !*TestRun {
     if (self.opts.cli) {
         const stdout = std.io.getStdOut();
@@ -288,8 +287,6 @@ pub fn finishArgument(self: *const Self, arg_run: *ArgRun) !void {
         try self.logChunk(arg_run.constrs.items[0], chunk);
     }
     try writer.writeAll("\n");
-
-    // TODO: Log entire argrun
 }
 
 fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !void {
@@ -710,7 +707,6 @@ pub fn finish(self: *Self, alloc: Allocator) !void {
 
     if (self.fail_count == 0) {
         if (self.output) |*out| {
-            // TODO: make the timestamp human readable
             const path = try std.fmt.allocPrintZ(alloc, "run_{d}.zon", .{std.time.timestamp()});
             defer alloc.free(path);
 
@@ -722,7 +718,6 @@ pub fn finish(self: *Self, alloc: Allocator) !void {
         try stderr.writer().print("Failed {d} permutations\n", .{self.fail_count});
 
         if (self.output) |*out| {
-            // TODO: make the timestamp human readable
             const path = try std.fmt.allocPrintZ(alloc, "failed_run_{d}.zon", .{std.time.timestamp()});
             defer alloc.free(path);
 

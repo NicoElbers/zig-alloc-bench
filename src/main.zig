@@ -72,7 +72,6 @@ fn fatal(arg: []const u8, comptime typ: union(enum) {
     std.process.exit(1);
 }
 
-// TODO: Ugly, create or find a library for this
 pub fn parseArgs(alloc: Allocator, default: Config) !Config {
     const eql = std.mem.eql;
     const Opts = runner.Config;

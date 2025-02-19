@@ -5,8 +5,7 @@ pub const TestOpts = struct {
 
     arg: TestArg.ArgInt,
 
-    // TODO: I don't really this being nullable
-    timeout_ns: ?u64 = null,
+    timeout_ns: u64,
 
     tty: std.io.tty.Config,
     test_fn: TestFn,
@@ -72,7 +71,7 @@ pub const TestInformation = struct {
 
     description: ?[]const u8 = null,
     charactaristics: TestCharacteristics = .default,
-    timeout_ns: ?u64 = null,
+    timeout_ns: u64 = std.time.ns_per_s,
     arg: TestArg = .none,
     rerun: Rerun = .default,
 
@@ -116,7 +115,6 @@ pub const ContructorInformation = struct {
     };
 };
 
-// TODO: This doesn't feel it belongs in runner
 pub const TestArg = union(enum) {
     pub const ArgInt = u64;
 
@@ -206,8 +204,6 @@ pub fn runAll(
 
     const filter: Filter = .init(opts.test_whitelist, opts.constr_whitelist, .{
         .type = opts.type,
-        // TODO: wut?
-        .meta = true,
     });
 
     std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
@@ -328,7 +324,6 @@ pub fn runAll(
                         const reason = switch (test_info.charactaristics.failure) {
                             .no_failure => "Failed test",
 
-                            // TODO: Call run success here somehow
                             .any_failure => {
                                 try logger.testSuccess();
                                 continue :constrs;
@@ -455,107 +450,108 @@ pub const StatsRet = struct {
 };
 
 fn runFork(alloc: Allocator, constr_fn: ConstructorFn, opts: TestOpts) !StatsRet {
-    const ChildRet = struct {
-        performance: Performance.Ret,
-        profiling: ?Profiling,
+    return switch (try process.fork()) {
+        .child => |files| runChild(constr_fn, files, opts),
+        .parent => |child| runParent(alloc, child, opts),
+    };
+}
+
+const ChildRet = struct {
+    performance: Performance.Ret,
+    profiling: ?Profiling,
+};
+
+fn runChild(
+    constr_fn: ConstructorFn,
+    files: process.ForkRetChild,
+    opts: TestOpts,
+) noreturn {
+    const err_pipe = files.err_pipe;
+    const ipc_write = files.ipc_write;
+    // const ipc_read = fork.ipc_read;
+
+    var stats = Performance.init() catch |err|
+        StatusCode.exitFatal(err, err_pipe);
+
+    constr_fn(opts) catch |err| {
+        if (@errorReturnTrace()) |st| {
+            process.dumpStackTrace(st.*, err_pipe.writer(), opts.tty);
+        }
+        StatusCode.exitFatal(err, err_pipe);
     };
 
-    // TODO: Look into making child and parent different functions
-    switch (try process.fork()) {
-        .child => |ret| {
-            const err_pipe = ret.err_pipe;
-            const ipc_write = ret.ipc_write;
-            // const ipc_read = fork.ipc_read;
+    const perf = stats.read() catch |err|
+        StatusCode.exitFatal(err, err_pipe);
+    stats.deinit();
 
-            var stats = Performance.init() catch |err|
-                StatusCode.exitFatal(err, err_pipe);
+    const child_ret: ChildRet = .{
+        .performance = perf,
+        .profiling = if (opts.profiling) |p| p.* else null,
+    };
 
-            constr_fn(opts) catch |err| {
-                if (@errorReturnTrace()) |st| {
-                    process.dumpStackTrace(st.*, err_pipe.writer(), opts.tty);
-                }
-                StatusCode.exitFatal(err, err_pipe);
-            };
+    // Dump information on the IPC pipe
+    @setEvalBranchQuota(2000);
+    std.zon.stringify.serialize(child_ret, .{ .whitespace = false }, ipc_write.writer()) catch |err|
+        StatusCode.exitFatal(err, err_pipe);
 
-            // FIXME: This is ugly
-            //
-            // For future reference, this is taking in a profiling instance
-            // to write it all at once in a second
-            const perf = stats.read() catch |err|
-                StatusCode.exitFatal(err, err_pipe);
-            stats.deinit();
+    StatusCode.exitSucess();
+}
 
-            const child_ret: ChildRet = .{
-                .performance = perf,
-                .profiling = if (opts.profiling) |p| p.* else null,
-            };
+fn runParent(alloc: Allocator, child: process.ForkRetParent, opts: TestOpts) !StatsRet {
+    defer child.stdin.close();
+    defer child.ipc_read.close();
 
-            // Dump information on the IPC pipe
-            @setEvalBranchQuota(2000);
-            std.zon.stringify.serialize(child_ret, .{ .whitespace = false }, ipc_write.writer()) catch |err|
-                StatusCode.exitFatal(err, err_pipe);
+    var rusage: posix.rusage = undefined;
+    const term = try process.waitOnFork(
+        child.pid,
+        &rusage,
+        opts.timeout_ns,
+    );
 
-            StatusCode.exitSucess();
-            unreachable; // Defensive, child may never escape this scope
-        },
-        .parent => |ret| {
-            defer ret.stdin.close();
-            defer ret.ipc_read.close();
-
-            var rusage: posix.rusage = undefined;
-            const term = try process.waitOnFork(
-                ret.pid,
-                &rusage,
-                opts.timeout_ns,
-            );
-
-            if (term.isFailing()) {
-                return .{
-                    .term = term,
-                    .stdout = ret.stdout,
-                    .stderr = ret.stderr,
-                    .err_pipe = ret.err_pipe,
-                    .rusage = rusage,
-                    .performance = undefined,
-                    .profiling = undefined,
-                };
-            }
-
-            const stats: ChildRet = if (opts.type == .testing)
-                undefined
-            else blk: {
-                var buf: [4096]u8 = undefined;
-                const amt = try ret.ipc_read.read(&buf);
-
-                // -1 because we need to make it sentinel terminated
-                if (amt >= buf.len - 1) return error.BufferTooSmall;
-
-                // HACK: ew
-                buf[amt] = 0;
-                const source: [:0]const u8 = @ptrCast(buf[0..amt]);
-
-                comptime assert(!requiresAllocator(ChildRet));
-                break :blk try std.zon.parse.fromSlice(
-                    ChildRet,
-                    alloc,
-                    source,
-                    null,
-                    .{},
-                );
-            };
-
-            return .{
-                .term = term,
-                .stdout = ret.stdout,
-                .stderr = ret.stderr,
-                .err_pipe = ret.err_pipe,
-                .rusage = rusage,
-                .performance = stats.performance,
-                .profiling = stats.profiling,
-            };
-        },
+    if (term.isFailing()) {
+        return .{
+            .term = term,
+            .stdout = child.stdout,
+            .stderr = child.stderr,
+            .err_pipe = child.err_pipe,
+            .rusage = rusage,
+            .performance = undefined,
+            .profiling = undefined,
+        };
     }
-    unreachable;
+
+    const stats: ChildRet = if (opts.type == .testing)
+        undefined
+    else blk: {
+        var buf: [4096]u8 = undefined;
+        const amt = try child.ipc_read.read(&buf);
+
+        // -1 because we need to make it sentinel terminated
+        if (amt >= buf.len - 1) return error.BufferTooSmall;
+
+        // HACK: ew
+        buf[amt] = 0;
+        const source: [:0]const u8 = @ptrCast(buf[0..amt]);
+
+        comptime assert(!requiresAllocator(ChildRet));
+        break :blk try std.zon.parse.fromSlice(
+            ChildRet,
+            alloc,
+            source,
+            null,
+            .{},
+        );
+    };
+
+    return .{
+        .term = term,
+        .stdout = child.stdout,
+        .stderr = child.stderr,
+        .err_pipe = child.err_pipe,
+        .rusage = rusage,
+        .performance = stats.performance,
+        .profiling = stats.profiling,
+    };
 }
 
 // remove with https://github.com/ziglang/zig/pull/22835
@@ -581,7 +577,6 @@ fn requiresAllocator(T: type) bool {
 
 const FilterOpts = struct {
     type: Config.Type,
-    meta: bool,
 };
 
 const Filter = struct {
@@ -644,9 +639,6 @@ const Filter = struct {
         // If the test requires multiple threads, but the allocator is single
         // threaded, skip
         if (test_chars.multithreaded and !constr_chars.thread_safe) return true;
-
-        // If we're not running meta tests, skip them
-        if (test_chars.meta and !self.opts.meta) return true;
 
         // Whitelist
         if (self.constr_whitelist) |whitelist| blk: {

@@ -37,7 +37,6 @@ pub fn P2Quantiles(comptime p: f64) type {
                 return;
             }
 
-            // Get the quantiles we're updating? TODO: verify
             const k: usize = blk: {
                 if (value < q[0]) {
                     q[0] = value;
@@ -60,7 +59,6 @@ pub fn P2Quantiles(comptime p: f64) type {
             // counters
             for (k + 1..5) |i| n[i] += 1;
 
-            // How much they want to change? TODO: verify
             const count_f: f64 = @floatFromInt(count);
             const ns: [3]f64 = .{
                 count_f * p / 2,
@@ -90,7 +88,6 @@ pub fn P2Quantiles(comptime p: f64) type {
                     if (q[i - 1] < qs and qs < q[i + 1])
                         q[i] = qs
                     else
-                        // Else linearly interpolate?? TODO: verify
                         q[i] = self.linear(i, dInt);
 
                     n[i] += dInt;
