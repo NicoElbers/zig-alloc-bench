@@ -294,8 +294,6 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
     const writer = stdout.writer();
     const color = std.io.tty.detectConfig(stdout);
 
-    _ = self;
-
     const first = first_run;
 
     try writer.writeAll("\n");
@@ -383,6 +381,8 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
             try writer.writeAll("\n");
         }
     }
+
+    if (self.opts.type != .profiling) return;
 
     // Profiling
     inline for (.{
