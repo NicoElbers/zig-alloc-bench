@@ -1,4 +1,5 @@
-pub const default = [_]TestInformation{
+pub const default = correctness ++
+    [_]TestInformation{
     .{
         .name = "First allocation",
         .test_fn = &firstAlloc,
@@ -9,15 +10,23 @@ pub const default = [_]TestInformation{
         },
     },
     .{
+        .name = "Binned allocations",
+        .test_fn = &allocBins,
+        .timeout_ns = std.time.ns_per_s / 10,
+        .arg = .{ .exponential = .{ .start = 64, .n = 14 } },
+        .rerun = .{
+            .run_at_least = 0,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
+    },
+    .{
         .name = "Many allocations and frees",
         .test_fn = &manyAllocFree,
-        .timeout_ns = std.time.ns_per_s,
         .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
     },
     .{
         .name = "Many allocations, resizes and frees",
         .test_fn = &manyAllocResizeFree,
-        .timeout_ns = std.time.ns_per_s,
         .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
     },
     .{
@@ -28,33 +37,30 @@ pub const default = [_]TestInformation{
     },
     .{
         .name = "Appending to many arraylists",
-        .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendingToMultipleArrayLists,
         .arg = .{ .exponential = .{ .start = 1, .n = 10 } },
     },
     .{
         .name = "Random access append",
-        .timeout_ns = std.time.ns_per_s,
         .test_fn = &appendAccessArray,
         .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
     },
+};
+
+pub const correctness = [_]TestInformation{
     .{
-        .name = "No free",
+        .name = "std tests",
+        .test_fn = &stdTests,
         .charactaristics = .{
-            .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .once,
-        .test_fn = &noFree,
     },
     .{
-        .name = "Double free",
+        .name = "Page alignment",
         .charactaristics = .{
-            .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .once,
-        .test_fn = &doubleFree,
+        .test_fn = &pageAlign,
     },
     .{
         .name = "Failing test",
@@ -67,27 +73,55 @@ pub const default = [_]TestInformation{
             .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .once,
         .test_fn = &failingTest,
     },
     .{
-        .name = "Basic alignment",
+        .name = "No free",
         .charactaristics = .{
+            .failure = .any_failure,
             .testing = true,
         },
-        .rerun = .once,
-        .test_fn = &alignmentFn,
+        .test_fn = &noFree,
     },
     .{
-        .name = "Aligned allocs",
-        .charactaristics = .default,
-        .test_fn = &alignedAllocs,
+        .name = "Double free",
+        .charactaristics = .{
+            .failure = .any_failure,
+            .testing = true,
+        },
+        .test_fn = &doubleFree,
     },
 };
+
+fn stdTests(alloc: Allocator, _: ArgInt) !void {
+    try std.heap.testAllocator(alloc);
+    try std.heap.testAllocatorAligned(alloc);
+    try std.heap.testAllocatorLargeAlignment(alloc);
+    try std.heap.testAllocatorAlignedShrink(alloc);
+}
 
 fn firstAlloc(alloc: Allocator, arg: ArgInt) !void {
     const a = try alloc.alloc(u8, arg);
     defer alloc.free(a);
+}
+
+fn allocBins(alloc: Allocator, arg: ArgInt) !void {
+    var prng = std.Random.DefaultPrng.init(0xdeadbeef);
+    const rand = prng.random();
+
+    const max = arg;
+    const min = arg >> 1;
+
+    assert(min > 0);
+
+    for (0..100) |_| {
+        const arr = try allocRange(u8, rand, alloc, min, max);
+
+        assert(arr.len <= max);
+        assert(arr.len >= min);
+
+        alloc.free(arr);
+    }
 }
 
 fn manyAllocFree(alloc: Allocator, arg: ArgInt) !void {
@@ -210,79 +244,31 @@ fn failingTest(alloc: Allocator, _: ArgInt) !void {
     return error.Fail;
 }
 
-const repetitions = 100;
+// Cannot do higher alignment https://github.com/ziglang/zig/issues/22975
+fn pageAlign(alloc: Allocator, _: ArgInt) !void {
+    const alignment: Alignment = comptime .fromByteUnits(std.heap.page_size_min);
 
-const Types = [_]type{
-    u8,            u32,                     u16,                     u128,
-    u256,          u512,                    u1024,                   u2048,
-    struct { u8 }, extern struct { a: u8 }, packed struct { a: u8 }, struct {},
-    usize,         *u8,
-};
+    var validationAllocator = std.mem.validationWrap(alloc);
+    const allocator = validationAllocator.allocator();
 
-fn alignmentFn(alloc: Allocator, _: ArgInt) !void {
-    inline for (Types) |T| {
-        var ptrs: [repetitions]*T = undefined;
+    var slice = try allocator.alignedAlloc(u8, alignment.toByteUnits(), 500);
+    try std.testing.expect(alignment.check(@intFromPtr(slice.ptr)));
 
-        for (0..repetitions) |i| {
-            const elem = try alloc.create(T);
-            ptrs[i] = elem;
-
-            try std.testing.expect(@intFromPtr(elem) % @alignOf(T) == 0);
-        }
-
-        for (ptrs) |ptr| alloc.destroy(ptr);
+    if (allocator.resize(slice, 100)) {
+        slice = slice[0..100];
     }
 
-    inline for (Types) |T| {
-        var ptrs: [repetitions][]T = undefined;
+    slice = try allocator.realloc(slice, 5000);
+    try std.testing.expect(alignment.check(@intFromPtr(slice.ptr)));
 
-        for (0..repetitions) |i| {
-            const arr = try alloc.alloc(T, 123);
-            ptrs[i] = arr;
-
-            try std.testing.expect(@intFromPtr(arr.ptr) % @alignOf(T) == 0);
-        }
-
-        for (ptrs) |ptr| alloc.free(ptr);
+    if (allocator.resize(slice, 10)) {
+        slice = slice[0..10];
     }
-}
 
-const Alignments = [_]Alignment{
-    .@"1",
-    .@"2",
-    .@"4",
-    .@"8",
-    .@"16",
-    .@"32",
-    .@"64",
+    slice = try allocator.realloc(slice, 20000);
+    try std.testing.expect(alignment.check(@intFromPtr(slice.ptr)));
 
-    // Biggest power of 2
-    @enumFromInt(std.math.log2_int(u29, 1 << 28)),
-
-    // Biggest value
-    @enumFromInt(std.math.log2_int(u29, 1 << 29 - 1)),
-};
-
-fn alignedAllocs(alloc: Allocator, _: ArgInt) !void {
-    inline for (Types) |T| {
-        inline for (Alignments) |alignm| {
-            var ptrs: [repetitions][]align(alignm.toByteUnits()) T = undefined;
-
-            var prng = std.Random.DefaultPrng.init(0xdeadbeef);
-            const rand = prng.random();
-
-            for (0..repetitions) |i| {
-                const arr = try allocAlignedRange(T, rand, alloc, alignm, 1, 1_000);
-                ptrs[i] = arr;
-
-                touchAllocation(rand, arr);
-
-                try std.testing.expect(@intFromPtr(arr.ptr) % alignm.toByteUnits() == 0);
-            }
-
-            for (ptrs) |ptr| alloc.free(ptr);
-        }
-    }
+    allocator.free(slice);
 }
 
 // ---- Common functions ----
@@ -324,6 +310,9 @@ inline fn allocAlignedRange(comptime T: type, rand: Random, alloc: Allocator, co
 
 const std = @import("std");
 const runner = @import("runner");
+
+const assert = std.debug.assert;
+
 const Allocator = std.mem.Allocator;
 const TestInformation = runner.TestInformation;
 const ArgInt = runner.TestArg.ArgInt;
