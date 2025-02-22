@@ -1,25 +1,34 @@
-pub const default = [_]ContructorInformation{
-    .{
-        .name = "SMP allocator",
-        .characteristics = .default,
-        .constr_fn = &smpAlloc,
+pub const default = [_]ContructorInformation{ .{
+    .name = "std SMP allocator",
+    .characteristics = .default,
+    .constr_fn = &stdSmpAllocator,
+}, .{
+    .name = "std Debug allocator",
+    .characteristics = .{
+        .safety = true,
     },
-    .{
-        .name = "Debug allocator",
-        .characteristics = .{
-            .safety = true,
-        },
-        .constr_fn = &debugAlloc,
-    },
-    .{
-        .name = "Page allocator",
-        .characteristics = .default,
-        .constr_fn = &pageAlloc,
-    },
-};
+    .constr_fn = &stdDebugAllocator,
+}, .{
+    .name = "std Page allocator",
+    .characteristics = .default,
+    .constr_fn = &stdPageAllocator,
+}, .{
+    .name = "binned allocator",
+    .characteristics = .default,
+    .constr_fn = &binnedAllocator,
+} };
 
-fn debugAlloc(opts: TestOpts) !void {
-    const DebugAllocator = std.heap.DebugAllocator;
+fn stdSmpAllocator(opts: TestOpts) !void {
+    const smp: Allocator = .{
+        .ptr = undefined,
+        .vtable = &@import("std_SmpAllocator.zig").vtable,
+    };
+
+    return runner.run(smp, opts);
+}
+
+fn stdDebugAllocator(opts: TestOpts) !void {
+    const DebugAllocator = @import("std_debug_allocator.zig").DebugAllocator;
 
     var dbg = DebugAllocator(.{
         .stack_trace_frames = if (std.debug.sys_can_stack_trace) 6 else 0,
@@ -36,16 +45,20 @@ fn debugAlloc(opts: TestOpts) !void {
     return ret;
 }
 
-fn smpAlloc(opts: TestOpts) !void {
-    const smp = std.heap.smp_allocator;
-
-    return runner.run(smp, opts);
-}
-
-fn pageAlloc(opts: TestOpts) !void {
-    const page: Allocator = .{ .ptr = undefined, .vtable = &std.heap.PageAllocator.vtable };
+fn stdPageAllocator(opts: TestOpts) !void {
+    const page: Allocator = .{
+        .ptr = undefined,
+        .vtable = &@import("std_PageAllocator.zig").vtable,
+    };
 
     return runner.run(page, opts);
+}
+
+fn binnedAllocator(opts: TestOpts) !void {
+    var binned = @import("silversquirl_binned_allocator.zig").BinnedAllocator(.{}){};
+    defer binned.deinit();
+
+    return runner.run(binned.allocator(), opts);
 }
 
 const std = @import("std");
