@@ -82,7 +82,7 @@ pub fn BinnedAllocator(comptime config: Config) type {
                 .vtable = &.{
                     .alloc = alloc,
                     .resize = resize,
-                    .remap = std.mem.Allocator.noRemap,
+                    .remap = remap,
                     .free = free,
                 },
             };
@@ -128,6 +128,11 @@ pub fn BinnedAllocator(comptime config: Config) type {
             // Assuming it's a large alloc
             if (new_len <= prev_size) return false; // New size fits into a bin
             return self.backing_allocator.rawResize(buf, alignment, new_len, ret_addr);
+        }
+
+        pub fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+            if (resize(ctx, memory, alignment, new_len, ret_addr)) return memory.ptr;
+            return null;
         }
 
         fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
