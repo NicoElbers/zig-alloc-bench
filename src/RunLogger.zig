@@ -452,8 +452,10 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
                     }
 
                     const tally = @field(run.run.profiling.?, tally_name) orelse {
+                        try color.setColor(writer, .dim);
                         try writer.writeByteNTimes(' ', tally_len);
                         try writer.writeAll("|");
+                        try color.setColor(writer, .reset);
                         continue;
                     };
                     const current_v = @field(tally, field);
