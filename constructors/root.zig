@@ -26,7 +26,7 @@ pub const default = [_]ContructorInformation{
         .characteristics = .default,
         .constr_fn = &rpmallocAllocator,
     },
-} };
+} ++ libc_allocator;
 
 fn stdSmpAllocator(opts: TestOpts) !void {
     const smp: Allocator = .{
@@ -78,8 +78,29 @@ fn rpmallocAllocator(opts: TestOpts) !void {
 
     return runner.run(alloc, opts);
 }
+
+pub const libc_allocator = if (link_libc)
+    [_]ContructorInformation{.{
+        .name = @tagName(abi) ++ " libc",
+        .characteristics = .default,
+        .constr_fn = &stdSmpAllocator,
+    }}
+else
+    [_]ContructorInformation{};
+
+fn libcAllocator(opts: TestOpts) !void {
+    const alloc = std.heap.c_allocator;
+
+    return runner.run(alloc, opts);
+}
+
 const std = @import("std");
 const runner = @import("runner");
+const builtin = @import("builtin");
+
+const link_libc = builtin.link_libc;
+const abi = builtin.abi;
+
 const TestOpts = runner.TestOpts;
 const TestFn = runner.TestFn;
 const Profiling = runner.Profiling;

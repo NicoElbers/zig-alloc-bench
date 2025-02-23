@@ -30,6 +30,17 @@
             lldb
             valgrind
           ];
+
         };
-      });
+
+        packages =  {
+          glibc = pkgs.glibc.out;
+          glibc-dev = pkgs.glibc.dev;
+          musl = pkgs.musl.out;
+          musl-dev = pkgs.musl.dev;
+          mimalloc = pkgs.mimalloc;
+          mimalloc-dev = pkgs.mimalloc.dev;
+          jemalloc = pkgs.jemalloc;
+        };
+     });
 }

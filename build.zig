@@ -1,7 +1,14 @@
 pub fn build(b: *Build) void {
+    const Libc = enum { musl, system };
+    const libc = b.option(Libc, "libc", "Choose the libc version linked (requires installed externals)") orelse .musl;
+
     const x86_v3 = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
+        .abi = switch (libc) {
+            .musl => .musl,
+            .system => null,
+        },
     });
     const optimize: OptimizeMode = switch (b.release_mode) {
         .off => .Debug,
@@ -14,11 +21,11 @@ pub fn build(b: *Build) void {
     const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
 
     const runner_mod = runner(b, x86_v3, optimize);
-
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = x86_v3,
         .optimize = optimize,
+        .link_libc = true,
     });
     exe_mod.addImport("runner", runner_mod);
     exe_mod.addImport("tests", tests(b, runner_mod, x86_v3, optimize));
