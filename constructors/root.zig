@@ -1,21 +1,31 @@
-pub const default = [_]ContructorInformation{ .{
-    .name = "std SMP allocator",
-    .characteristics = .default,
-    .constr_fn = &stdSmpAllocator,
-}, .{
-    .name = "std Debug allocator",
-    .characteristics = .{
-        .safety = true,
+pub const default = [_]ContructorInformation{
+    .{
+        .name = "std SMP allocator",
+        .characteristics = .default,
+        .constr_fn = &stdSmpAllocator,
     },
-    .constr_fn = &stdDebugAllocator,
-}, .{
-    .name = "std Page allocator",
-    .characteristics = .default,
-    .constr_fn = &stdPageAllocator,
-}, .{
-    .name = "binned allocator",
-    .characteristics = .default,
-    .constr_fn = &binnedAllocator,
+    .{
+        .name = "std Debug allocator",
+        .characteristics = .{
+            .safety = true,
+        },
+        .constr_fn = &stdDebugAllocator,
+    },
+    .{
+        .name = "std Page allocator",
+        .characteristics = .default,
+        .constr_fn = &stdPageAllocator,
+    },
+    .{
+        .name = "binned allocator",
+        .characteristics = .default,
+        .constr_fn = &binnedAllocator,
+    },
+    .{
+        .name = "rpmalloc",
+        .characteristics = .default,
+        .constr_fn = &rpmallocAllocator,
+    },
 } };
 
 fn stdSmpAllocator(opts: TestOpts) !void {
@@ -61,6 +71,13 @@ fn binnedAllocator(opts: TestOpts) !void {
     return runner.run(binned.allocator(), opts);
 }
 
+fn rpmallocAllocator(opts: TestOpts) !void {
+    const rpmalloc = @import("rpmalloc.zig");
+    const alloc = rpmalloc.init();
+    defer rpmalloc.deinit();
+
+    return runner.run(alloc, opts);
+}
 const std = @import("std");
 const runner = @import("runner");
 const TestOpts = runner.TestOpts;

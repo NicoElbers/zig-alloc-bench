@@ -1,13 +1,8 @@
-const std = @import("std");
-
 pub fn build(b: *Build) void {
     const x86_v3 = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
     });
-
-    const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
-
     const optimize: OptimizeMode = switch (b.release_mode) {
         .off => .Debug,
         .any => .ReleaseSafe,
@@ -15,6 +10,8 @@ pub fn build(b: *Build) void {
         .safe => .ReleaseSafe,
         .small => .ReleaseSmall,
     };
+
+    const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
 
     const runner_mod = runner(b, x86_v3, optimize);
 
@@ -33,16 +30,8 @@ pub fn build(b: *Build) void {
         .use_llvm = !selfhosted,
         .use_lld = !selfhosted,
     });
+
     b.installArtifact(exe);
-
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
@@ -73,16 +62,27 @@ pub fn tests(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optim
 }
 
 pub fn constructors(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+    const rpmalloc = b.dependency("rpmalloc", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const constructors_mod = b.createModule(.{
         .root_source_file = b.path("constructors/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
+    constructors_mod.addImport("rpmalloc", rpmalloc.module("bindings"));
     constructors_mod.addImport("runner", runner_mod);
 
     return constructors_mod;
 }
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+const native_os = builtin.os.tag;
 
 const OptimizeMode = std.builtin.OptimizeMode;
 const Build = std.Build;

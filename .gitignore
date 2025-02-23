@@ -2,3 +2,5 @@
 .zig-cache
 zig-out/bin
 runs/**
+external
+external.old
