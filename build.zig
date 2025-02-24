@@ -1,15 +1,8 @@
 pub fn build(b: *Build) void {
-    const Libc = enum { musl, system };
-    const libc = b.option(Libc, "libc", "Choose the libc version linked (requires installed externals)") orelse .musl;
+    const target = b.standardTargetOptions(.{});
 
-    const x86_v3 = b.resolveTargetQuery(.{
-        .cpu_arch = .x86_64,
-        .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
-        .abi = switch (libc) {
-            .musl => .musl,
-            .system => null,
-        },
-    });
+    const native_target = b.resolveTargetQuery(.{});
+
     const optimize: OptimizeMode = switch (b.release_mode) {
         .off => .Debug,
         .any => .ReleaseSafe,
@@ -20,31 +13,34 @@ pub fn build(b: *Build) void {
 
     const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
 
-    const runner_mod = runner(b, x86_v3, optimize);
+    const runner_mod = runner(b, target, optimize);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
-        .target = x86_v3,
+        .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
     exe_mod.addImport("runner", runner_mod);
-    exe_mod.addImport("tests", tests(b, runner_mod, x86_v3, optimize));
+    exe_mod.addImport("tests", tests(b, runner_mod, target, optimize));
 
     const opts = b.addOptions();
 
-    const constr_mod = constructors(b, runner_mod, x86_v3, optimize);
-    opts.addOption(bool, "jemalloc", isExternalsInstalled());
-    opts.addOption(bool, "mimalloc", isExternalsInstalled());
+    const can_link_externals = isExternalsInstalled() and
+        target.result.dynamic_linker.eql(native_target.result.dynamic_linker);
+
+    const constr_mod = constructors(b, runner_mod, target, optimize);
+    opts.addOption(bool, "jemalloc", can_link_externals);
+    opts.addOption(bool, "mimalloc", can_link_externals);
 
     constr_mod.addOptions("config", opts);
 
-    if (isExternalsInstalled()) {
+    if (can_link_externals) {
         std.log.info("Adding jemalloc", .{});
-        constr_mod.addImport("jemalloc", jemalloc(b, x86_v3, optimize));
+        constr_mod.addImport("jemalloc", jemalloc(b, target, optimize));
 
         std.log.info("Adding mimalloc", .{});
-        constr_mod.addImport("mimalloc", mimalloc(b, x86_v3, optimize));
+        constr_mod.addImport("mimalloc", mimalloc(b, target, optimize));
     }
     exe_mod.addImport("constructors", constr_mod);
 
@@ -65,15 +61,15 @@ pub fn build(b: *Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 
-    installExternalsStep(b);
+    installExternalsStep(b, native_target);
 }
 
-fn installExternalsStep(b: *Build) void {
+fn installExternalsStep(b: *Build, target: Build.ResolvedTarget) void {
     const install_step = b.step("externals", "Install external allocators (requires nix)");
 
     const install_mod = b.createModule(.{
         .root_source_file = b.path("externals.zig"),
-        .target = b.standardTargetOptions(.{}),
+        .target = target,
         .optimize = .Debug, // Faster builds
     });
 
