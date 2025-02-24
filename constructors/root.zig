@@ -26,7 +26,7 @@ pub const default = [_]ContructorInformation{
         .characteristics = .default,
         .constr_fn = &rpmallocAllocator,
     },
-} ++ libc_allocator;
+} ++ libc_allocator ++ jemalloc ++ mimalloc;
 
 fn stdSmpAllocator(opts: TestOpts) !void {
     const smp: Allocator = .{
@@ -79,6 +79,36 @@ fn rpmallocAllocator(opts: TestOpts) !void {
     return runner.run(alloc, opts);
 }
 
+pub const jemalloc = if (config.jemalloc)
+    [_]ContructorInformation{.{
+        .name = "jemalloc",
+        .characteristics = .default,
+        .constr_fn = &jemallocAllocator,
+    }}
+else
+    [_]ContructorInformation{};
+
+fn jemallocAllocator(opts: TestOpts) !void {
+    const alloc = @import("jemalloc").allocator;
+
+    return runner.run(alloc, opts);
+}
+
+pub const mimalloc = if (config.mimalloc)
+    [_]ContructorInformation{.{
+        .name = "mimalloc",
+        .characteristics = .default,
+        .constr_fn = &mimallocAllocator,
+    }}
+else
+    [_]ContructorInformation{};
+
+fn mimallocAllocator(opts: TestOpts) !void {
+    const alloc: Allocator = @import("mimalloc").allocator;
+
+    return runner.run(alloc, opts);
+}
+
 pub const libc_allocator = if (link_libc)
     [_]ContructorInformation{.{
         .name = @tagName(abi) ++ " libc",
@@ -97,6 +127,7 @@ fn libcAllocator(opts: TestOpts) !void {
 const std = @import("std");
 const runner = @import("runner");
 const builtin = @import("builtin");
+const config = @import("config");
 
 const link_libc = builtin.link_libc;
 const abi = builtin.abi;
