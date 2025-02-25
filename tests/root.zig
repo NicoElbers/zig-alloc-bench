@@ -1,4 +1,4 @@
-pub const default = correctness ++
+pub const default = playback.playback ++ correctness ++
     [_]TestInformation{
     .{
         .name = "First allocation",
@@ -271,47 +271,14 @@ fn pageAlign(alloc: Allocator, _: ArgInt) !void {
     allocator.free(slice);
 }
 
-// ---- Common functions ----
-
-/// Minially touch an allocation, to ensure it actually exists, but to influence
-/// time as little as possible
-inline fn touchAllocation(rand: Random, allocation: anytype) void {
-    const info = @typeInfo(@TypeOf(allocation)).pointer;
-
-    if (@typeInfo(info.child) != .int) {
-        switch (info.size) {
-            .one => allocation.* = undefined,
-            .slice => {
-                allocation[0] = undefined;
-                allocation[allocation.len - 1] = undefined;
-            },
-            else => comptime unreachable,
-        }
-        return;
-    }
-
-    switch (info.size) {
-        .one => allocation.* = rand.int(info.child),
-        .slice => {
-            allocation[0] = rand.int(info.child);
-            allocation[allocation.len - 1] = rand.int(info.child);
-        },
-        else => comptime unreachable,
-    }
-}
-
-inline fn allocRange(comptime T: type, rand: Random, alloc: Allocator, min: usize, max: usize) ![]T {
-    return alloc.alloc(T, rand.intRangeAtMost(usize, min, max));
-}
-
-inline fn allocAlignedRange(comptime T: type, rand: Random, alloc: Allocator, comptime alignment: Alignment, min: usize, max: usize) ![]align(alignment.toByteUnits()) T {
-    return alloc.alignedAlloc(T, alignment.toByteUnits(), rand.intRangeAtMost(usize, min, max));
-}
-
 const std = @import("std");
 const runner = @import("runner");
+const common = @import("common.zig");
+const playback = @import("playback.zig");
 
 const assert = std.debug.assert;
+const allocRange = common.allocRange;
+const touchAllocation = common.touchAllocation;
 
 const Allocator = std.mem.Allocator;
 const TestInformation = runner.TestInformation;
