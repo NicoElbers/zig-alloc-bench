@@ -131,9 +131,15 @@ pub fn parseArgs(alloc: Allocator, default: Config) !Config {
 }
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+
+    const base_alloc: Allocator = switch (@import("builtin").mode) {
+        .Debug => gpa.allocator(),
+        else => std.heap.smp_allocator,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(base_alloc);
     defer arena.deinit();
 
     const opts = try parseArgs(arena.allocator(), .{
@@ -142,7 +148,7 @@ pub fn main() !void {
     });
 
     try runner.runAll(
-        gpa.allocator(),
+        base_alloc,
         &tests.default,
         &constructors.default,
         opts,
