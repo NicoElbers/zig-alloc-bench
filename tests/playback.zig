@@ -160,7 +160,7 @@ pub const playback = [_]TestInformation{
     .{
         .name = "Zig compiler playback",
         .test_fn = &zigCompPlayback,
-        .timeout_ns = std.time.ns_per_s * 120,
+        .timeout_ns = std.time.ns_per_s * 90,
         .rerun = .{
             .run_at_least = 1,
             .run_for_ns = std.time.ns_per_s,
