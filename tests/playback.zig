@@ -91,10 +91,7 @@ pub fn run(path: [:0]const u8, alloc: Allocator) !void {
     const rand = prng.random();
 
     var ptr_map: std.AutoHashMapUnmanaged(usize, []u8) = .empty;
-    defer {
-        std.log.debug("Deiniting ptrmap", .{});
-        ptr_map.deinit(alloc);
-    }
+    defer ptr_map.deinit(alloc);
 
     while (iter.next()) |action| switch (action) {
         .allocation => |a| {
