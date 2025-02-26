@@ -12,6 +12,7 @@ pub fn build(b: *Build) void {
     };
 
     const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
+    const external = b.option(bool, "external", "Link in external allocators") orelse true;
 
     const runner_mod = runner(b, target, optimize);
 
@@ -26,7 +27,8 @@ pub fn build(b: *Build) void {
 
     const opts = b.addOptions();
 
-    const can_link_externals = isExternalsInstalled() and
+    const can_link_externals = external and
+        isExternalsInstalled() and
         target.result.dynamic_linker.eql(native_target.result.dynamic_linker);
 
     const constr_mod = constructors(b, runner_mod, target, optimize);
