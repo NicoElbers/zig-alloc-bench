@@ -1,5 +1,4 @@
-pub const default = playback.playback ++ correctness ++
-    [_]TestInformation{
+pub const default = correctness ++ [_]TestInformation{
     .{
         .name = "First allocation",
         .test_fn = &firstAlloc,
@@ -45,7 +44,7 @@ pub const default = playback.playback ++ correctness ++
         .test_fn = &appendAccessArray,
         .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
     },
-};
+} ++ playback.playback;
 
 pub const correctness = [_]TestInformation{
     .{
