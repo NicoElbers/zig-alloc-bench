@@ -4,7 +4,7 @@ pub const Profiling = struct {
     remaps: FallableTally = .init,
     frees: LazyTally = .init,
 
-    pub fn zonable(self: *const Profiling) Zonable {
+    pub fn zonable(self: *Profiling) Zonable {
         const allocations = self.allocations.zonable();
         const resizes = self.resizes.zonable();
         const remaps = self.remaps.zonable();
@@ -26,6 +26,39 @@ pub const Profiling = struct {
         remaps_success: ?Tally.Zonable,
         remaps_failure: ?Tally.Zonable,
         frees: ?Tally.Zonable,
+
+        pub fn add(self: *Zonable, o: Zonable) void {
+            inline for (comptime std.meta.fieldNames(Zonable)) |name| {
+                if (@field(o, name)) |other_field| {
+                    if (@field(self, name) == null) @field(self, name) = .init;
+
+                    const self_field = &@field(self, name).?;
+
+                    inline for (comptime std.meta.fieldNames(Tally.Zonable)) |inner_name| {
+                        @field(self_field, inner_name) += @field(other_field, inner_name);
+                    }
+                }
+            }
+        }
+
+        pub fn div(self: *Zonable, by: f64) void {
+            inline for (comptime std.meta.fieldNames(Zonable)) |name| {
+                if (@field(self, name)) |*field| {
+                    inline for (comptime std.meta.fieldNames(Tally.Zonable)) |inner_name| {
+                        @field(field, inner_name) /= by;
+                    }
+                }
+            }
+        }
+
+        pub const init: Zonable = .{
+            .allocations = null,
+            .resizes_success = null,
+            .resizes_failure = null,
+            .remaps_success = null,
+            .remaps_failure = null,
+            .frees = null,
+        };
     };
 
     pub const init: Profiling = .{};

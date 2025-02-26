@@ -194,14 +194,6 @@ pub fn runAll(
     constrs: []const ContructorInformation,
     opts: Config,
 ) !void {
-    var logger: RunLogger = try .init(alloc, .{
-        .type = opts.type,
-        .cli = !opts.quiet,
-        .disk = !opts.dry_run,
-        .prefix = opts.prefix,
-    });
-    defer logger.finish(alloc) catch |err| @panic(@errorName(err));
-
     const filter: Filter = .init(opts.test_whitelist, opts.constr_whitelist, .{
         .type = opts.type,
     });
@@ -220,6 +212,7 @@ pub fn runAll(
                     if (filter.filterCombination(test_info, constr_info)) continue :constrs;
 
                     var prof: Profiling = .init;
+                    var current_run: Run = .init;
 
                     const test_opts: TestOpts = .{
                         .type = opts.type,
@@ -239,6 +232,7 @@ pub fn runAll(
                         alloc,
                         constr_info.constr_fn,
                         test_opts,
+                        &current_run,
                     );
 
                     switch (status) {
@@ -250,6 +244,14 @@ pub fn runAll(
         }
         return;
     }
+
+    var logger: RunLogger = try .init(alloc, .{
+        .type = opts.type,
+        .cli = !opts.quiet,
+        .disk = !opts.dry_run,
+        .prefix = opts.prefix,
+    });
+    defer logger.finish(alloc) catch |err| @panic(@errorName(err));
 
     tests: for (tests) |test_info| {
         if (filter.filterTest(test_info)) continue :tests;
@@ -272,7 +274,10 @@ pub fn runAll(
 
                 try logger.startConstr(constr_info);
 
-                var prof: Profiling = if (opts.type == .profiling) .init else undefined;
+                var current_run: Run = .init;
+
+                // FIXME: ew
+                var tmp: Profiling = .init;
 
                 const test_opts: TestOpts = .{
                     .type = opts.type,
@@ -280,7 +285,7 @@ pub fn runAll(
                     .timeout_ns = test_info.timeout_ns,
                     .tty = opts.tty,
                     .arg = arg,
-                    .profiling = if (opts.type == .profiling) &prof else null,
+                    .profiling = if (opts.type == .profiling) &tmp else null,
                 };
 
                 const rerun: Rerun = if (opts.type == .testing)
@@ -292,10 +297,11 @@ pub fn runAll(
                     alloc,
                     constr_info.constr_fn,
                     test_opts,
+                    &current_run,
                 );
 
                 switch (status) {
-                    .success => |current_run| {
+                    .success => |prof| {
                         switch (test_info.charactaristics.failure) {
                             .no_failure => {},
                             .any_failure, .term => {
@@ -308,8 +314,8 @@ pub fn runAll(
                             alloc,
                             constr_info,
                             arg_run,
-                            current_run,
-                            if (opts.type == .profiling) &prof else null,
+                            &current_run,
+                            prof,
                         );
                     },
 
@@ -352,13 +358,12 @@ pub const Run = struct {
     max_rss: Tally = .init,
     cache_misses: Tally = .init,
 
-    pub fn zonable(self: *const Run, prof: ?*const Profiling) Zonable {
+    pub fn zonable(self: *Run) Zonable {
         return .{
             .runs = self.runs,
             .time = self.time.zonable(),
             .max_rss = self.max_rss.zonable(),
             .cache_misses = self.cache_misses.zonable(),
-            .profiling = if (prof) |p| p.zonable() else null,
         };
     }
 
@@ -367,7 +372,6 @@ pub const Run = struct {
         time: Tally.Zonable,
         max_rss: Tally.Zonable,
         cache_misses: Tally.Zonable,
-        profiling: ?Profiling.Zonable,
     };
 
     pub const init: Run = .{};
@@ -383,7 +387,7 @@ pub const Rerun = struct {
     };
 
     pub const default: Rerun = .{
-        .run_at_least = 20,
+        .run_at_least = 5,
         .run_for_ns = std.time.ns_per_s,
     };
 
@@ -392,14 +396,14 @@ pub const Rerun = struct {
         alloc: Allocator,
         constr_fn: ConstructorFn,
         test_opts: TestOpts,
+        current_run: *Run,
     ) !union(enum) {
-        success: Run,
+        success: ?Profiling.Zonable,
         failure: StatsRet,
     } {
+        var prof: ?Profiling.Zonable = if (test_opts.profiling) |_| .init else null;
         var run_count: usize = 0;
         var timer = std.time.Timer.start() catch @panic("Must support timers");
-
-        var current_run: Run = .init;
 
         while (timer.read() < self.run_for_ns or run_count < self.run_at_least) {
             defer run_count += 1;
@@ -424,12 +428,18 @@ pub const Rerun = struct {
             current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
             current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
 
-            if (test_opts.type == .profiling) {
-                test_opts.profiling.?.* = ret.profiling.?;
+            if (prof) |*p| {
+                p.add(ret.profiling.?);
             }
         }
 
-        return .{ .success = current_run };
+        if (prof) |*p| blk: {
+            if (run_count == 0) break :blk;
+
+            p.div(@floatFromInt(run_count));
+        }
+
+        return .{ .success = prof };
     }
 };
 
@@ -440,7 +450,7 @@ pub const StatsRet = struct {
     err_pipe: File,
     rusage: posix.rusage,
     performance: Performance.Ret,
-    profiling: ?Profiling,
+    profiling: ?Profiling.Zonable,
 
     pub fn deinit(self: @This()) void {
         self.err_pipe.close();
@@ -458,7 +468,7 @@ fn runFork(alloc: Allocator, constr_fn: ConstructorFn, opts: TestOpts) !StatsRet
 
 const ChildRet = struct {
     performance: Performance.Ret,
-    profiling: ?Profiling,
+    profiling: ?Profiling.Zonable,
 };
 
 fn runChild(
@@ -486,7 +496,7 @@ fn runChild(
 
     const child_ret: ChildRet = .{
         .performance = perf,
-        .profiling = if (opts.profiling) |p| p.* else null,
+        .profiling = if (opts.profiling) |p| p.zonable() else null,
     };
 
     // Dump information on the IPC pipe
@@ -523,7 +533,7 @@ fn runParent(alloc: Allocator, child: process.ForkRetParent, opts: TestOpts) !St
     const stats: ChildRet = if (opts.type == .testing)
         undefined
     else blk: {
-        var buf: [4096]u8 = undefined;
+        var buf: [1024]u8 = undefined;
         const amt = try child.ipc_read.read(&buf);
 
         // -1 because we need to make it sentinel terminated

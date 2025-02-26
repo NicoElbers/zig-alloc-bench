@@ -62,6 +62,7 @@ pub const ArgRun = struct {
 pub const ConstrRun = struct {
     constr_info: ContructorInformation.Zonable,
     run: Run.Zonable,
+    prof: ?Profiling.Zonable,
 };
 pub const Output = struct {
     dir: std.fs.Dir,
@@ -395,7 +396,7 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
     }) |tally_name| {
         const maybe_first_tally = blk: {
             for (chunk) |run| {
-                break :blk @field(run.run.profiling.?, tally_name) orelse continue;
+                break :blk @field(run.prof.?, tally_name) orelse continue;
             }
 
             break :blk null;
@@ -412,7 +413,7 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
                     var counter = std.io.countingWriter(writer);
                     const inner_writer = counter.writer();
 
-                    const maybe_tally = @field(run.run.profiling.?, tally_name);
+                    const maybe_tally = @field(run.prof.?, tally_name);
 
                     if (maybe_tally) |tally| {
                         if (tally.outliers > 10) {
@@ -451,7 +452,7 @@ fn logChunk(self: *const Self, first_run: ConstrRun, chunk: []const ConstrRun) !
                         try prefix(field);
                     }
 
-                    const tally = @field(run.run.profiling.?, tally_name) orelse {
+                    const tally = @field(run.prof.?, tally_name) orelse {
                         try color.setColor(writer, .dim);
                         try writer.writeByteNTimes(' ', tally_len);
                         try writer.writeAll("|");
@@ -661,12 +662,13 @@ pub fn runSuccess(
     alloc: Allocator,
     constr_info: ContructorInformation,
     arg_run: *ArgRun,
-    run_info: Run,
-    prof: ?*const Profiling,
+    run_info: *Run,
+    prof: ?Profiling.Zonable,
 ) !void {
     try arg_run.constrs.append(alloc, .{
         .constr_info = constr_info.zonable(),
-        .run = run_info.zonable(prof),
+        .run = run_info.zonable(),
+        .prof = prof,
     });
 
     if (self.opts.disk) try updateFile(self, alloc);

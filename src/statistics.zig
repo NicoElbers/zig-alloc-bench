@@ -1,176 +1,343 @@
-/// A constant memory algorithm that estimates quanitiles, based on:
-/// https://aakinshin.net/posts/p2-quantile-estimator-intro/
-pub fn P2Quantiles(comptime p: f64) type {
-    assert(p >= 0);
-    assert(p <= 1);
+pub fn TDigest(compression: f64) type {
+    const Centroid = struct {
+        mean: f64,
+        weight: f64,
+
+        pub fn add(s: *@This(), o: @This()) void {
+            assert(o.weight >= 0);
+
+            if (s.weight > 0) {
+                s.weight += o.weight;
+                s.mean += o.weight * (o.mean - s.mean) / s.weight;
+            } else {
+                s.weight = o.weight;
+                s.mean = o.mean;
+            }
+        }
+
+        pub fn lessThan(_: void, lhs: @This(), rhs: @This()) bool {
+            return lhs.mean < rhs.mean;
+        }
+    };
+
+    const compression_u: usize = @intFromFloat(@ceil(compression));
+    const maxProcessed = 2 * compression_u;
+    const maxUnprocessed = 8 * compression_u;
 
     return struct {
-        n: [5]f64,
-        q: [5]f64,
-        count: usize,
+        processed: std.BoundedArray(Centroid, maxProcessed),
+        cumulative: std.BoundedArray(f64, maxProcessed + 1),
+        unprocessed: std.BoundedArray(Centroid, maxUnprocessed + maxProcessed),
+        processedWeight: f64,
+        unprocessedWeight: f64,
+        min: f64,
+        max: f64,
+        outliers: usize,
 
-        const init: @This() = .{
-            .q = undefined,
-            .n = .{ 0, 1, 2, 3, 4 },
-            .count = 0,
+        pub const init: @This() = .{
+            .processed = .{},
+            .unprocessed = .{},
+            .cumulative = .{},
+            .processedWeight = 0,
+            .unprocessedWeight = 0,
+            .min = std.math.floatMax(f64),
+            .max = -std.math.floatMax(f64),
+            .outliers = 0,
         };
 
         pub fn add(self: *@This(), value: f64) void {
-            // Makes the math more readable
-            const q = &self.q;
-            const n = &self.n;
-            const count = self.count;
+            assert(std.math.isFinite(value));
+            assert(!std.math.isNan(value));
 
-            defer self.count += 1;
+            // Never overflow, otherwise bad things happen
+            assert(self.unprocessed.len <= maxUnprocessed);
+            defer assert(self.unprocessed.len <= maxUnprocessed);
 
-            // First 5 values are for initialization
-            if (self.count < 5) {
-                q[self.count] = value;
+            self.min = @min(self.min, value);
+            self.max = @max(self.max, value);
 
-                if (self.count == 4) {
-                    // Perform actual initialization
+            self.unprocessed.appendAssumeCapacity(.{ .mean = value, .weight = 1 });
+            self.unprocessedWeight += 1;
 
-                    // For 5 elements there's no problem using insertion sort
-                    std.sort.insertion(f64, &self.q, {}, std.sort.asc(f64));
-                }
+            if (self.unprocessed.len == maxUnprocessed) {
+                self.process();
+            }
+        }
 
+        pub fn count(self: *@This()) f64 {
+            self.process();
+            return self.processedWeight;
+        }
+
+        pub fn getOutliers(self: *@This()) usize {
+            self.process();
+            return self.outliers;
+        }
+
+        pub fn quantile(self: *@This(), q: f64) f64 {
+            self.process();
+            self.updateCumulative();
+
+            return quantileRaw(self, q);
+        }
+
+        fn quantileRaw(self: *@This(), q: f64) f64 {
+            assert(q >= 0);
+            assert(q <= 1);
+
+            assert(self.processed.len > 0);
+
+            const processed = &self.processed;
+            const cumulative = &self.cumulative;
+
+            if (processed.len == 1) return processed.get(0).mean;
+
+            const index = q * self.processedWeight;
+            if (index <= processed.get(0).weight / 2) {
+                const zero = processed.get(0);
+
+                return self.min + 2 * index / zero.weight * (zero.mean - self.min);
+            }
+
+            var lower: usize = 0;
+            while (cumulative.get(lower) < index) : (lower += 1) {}
+
+            if (lower != cumulative.len - 1) {
+                const z1 = index - cumulative.get(lower - 1);
+                const z2 = cumulative.get(lower) - index;
+                return weightedAvg(
+                    processed.get(lower - 1).mean,
+                    z2,
+                    processed.get(lower).mean,
+                    z1,
+                );
+            }
+
+            const z1 = index - self.processedWeight - processed.get(lower - 1).weight / 2;
+            const z2 = (processed.get(lower - 1).weight / 2) - z1;
+            return weightedAvg(
+                processed.get(processed.len - 1).mean,
+                z1,
+                self.max,
+                z2,
+            );
+        }
+
+        pub fn getMin(self: *@This()) f64 {
+            self.process();
+            return self.min;
+        }
+
+        pub fn getMax(self: *@This()) f64 {
+            self.process();
+            return self.max;
+        }
+
+        fn weightedAvg(v1: f64, w1: f64, v2: f64, w2: f64) f64 {
+            return if (v1 <= v2)
+                weightedAvgSorted(v1, w1, v2, w2)
+            else
+                weightedAvgSorted(v2, w2, v1, w1);
+        }
+
+        fn weightedAvgSorted(v1: f64, w1: f64, v2: f64, w2: f64) f64 {
+            const v = (v1 * w1 + v2 * w2) / (w1 + w2);
+            return @max(v1, @min(v, v2));
+        }
+
+        fn updateCumulative(self: *@This()) void {
+            if (self.cumulative.len > 0 and
+                self.cumulative.get(self.cumulative.len - 1) == self.processedWeight)
+            {
                 return;
             }
 
-            const k: usize = blk: {
-                if (value < q[0]) {
-                    q[0] = value;
-                    break :blk 0;
-                } else if (value < q[1])
-                    break :blk 0
-                else if (value < q[2])
-                    break :blk 1
-                else if (value < q[3])
-                    break :blk 2
-                else if (value < q[4])
-                    break :blk 3
-                else {
-                    q[4] = value;
-                    break :blk 3;
+            // We need to deal with the entire processed list and 1 more
+            comptime assert(self.cumulative.buffer.len == maxProcessed + 1);
+
+            self.cumulative.clear();
+
+            var prev: f64 = 0;
+            for (self.processed.slice()) |centroid| {
+                const cur = centroid.weight;
+                self.cumulative.appendAssumeCapacity(prev + (cur / 2));
+                prev += cur;
+            }
+            self.cumulative.appendAssumeCapacity(prev);
+        }
+
+        fn process(self: *@This()) void {
+            // At the end of process, unprocessed should be empty
+            defer assert(self.unprocessed.len == 0);
+            defer assert(self.processed.len <= maxProcessed);
+
+            assert(self.unprocessed.len <= maxUnprocessed);
+
+            if (self.unprocessed.len == 0) return;
+            defer self.unprocessed.clear();
+
+            const processed = &self.processed;
+            const unprocessed = &self.unprocessed;
+
+            // Put all centroids into the unprocessed buffer and sort
+            unprocessed.appendSliceAssumeCapacity(processed.slice());
+            processed.clear();
+
+            std.mem.sort(Centroid, unprocessed.slice(), {}, Centroid.lessThan);
+
+            processed.appendAssumeCapacity(unprocessed.get(0));
+
+            self.processedWeight += self.unprocessedWeight;
+            self.unprocessedWeight = 0;
+
+            // The meat and potatoes:
+            // - Set limits on the weight in 'this bucket'
+            // - If this centroid fits in this bucket, add it
+            // - Else make this centroid the start of the next bucket
+            var prev: f64 = unprocessed.get(0).weight;
+            var limit: f64 = self.processedWeight * integratedQ(1);
+
+            for (unprocessed.slice()[1..]) |centroid| {
+                const next = prev + centroid.weight;
+                defer prev = next;
+
+                if (next <= limit) {
+                    (&processed.buffer[processed.len - 1]).add(centroid);
+                } else {
+                    const k1 = integratedLocation(prev / self.processedWeight);
+                    limit = self.processedWeight * integratedQ(k1 + 1);
+                    processed.appendAssumeCapacity(centroid);
                 }
-            };
+            }
 
-            // We're going to update all quantiles after k, so increment their
-            // counters
-            for (k + 1..5) |i| n[i] += 1;
+            // Count outliers
+            self.updateCumulative();
+            const p25 = self.quantileRaw(0.25);
+            const p75 = self.quantileRaw(0.75);
 
-            const count_f: f64 = @floatFromInt(count);
-            const ns: [3]f64 = .{
-                count_f * p / 2,
-                count_f * p,
-                count_f * (1 + p) / 2,
-            };
+            const iqr = p75 - p25;
 
-            // The meat and potatoes that I do not understand
-            inline for (1..4) |i| {
-                // Get the diff
-                const d: f64 = ns[i - 1] - n[i];
+            assert(iqr >= 0);
 
-                if ((d >= 1 and n[i + 1] - n[i] > 1) or
-                    (d <= -1 and (n[i - 1] - n[i]) < -1))
-                {
-                    // Get the sign for some reason
-                    const dInt = std.math.sign(d);
+            const lower = p25 - 1.5 * iqr;
+            const upper = p75 + 1.5 * iqr;
 
-                    // Compute some parabolic something
-                    const qs = self.parabolic(i, dInt);
+            for (unprocessed.slice()) |centroid| {
+                if (centroid.weight > 1) continue;
 
-                    if (!std.math.isFinite(dInt)) {
-                        std.debug.panicExtra(null, "qs: {d}; dInt: {d}", .{ qs, dInt });
-                    }
-
-                    // If qs falls inside this 'bucket' we take it
-                    if (q[i - 1] < qs and qs < q[i + 1])
-                        q[i] = qs
-                    else
-                        q[i] = self.linear(i, dInt);
-
-                    n[i] += dInt;
-                }
+                if (lower > centroid.mean or centroid.mean > upper)
+                    self.outliers += 1;
             }
         }
 
-        fn parabolic(self: *const @This(), i: usize, d: f64) f64 {
-            const q = &self.q;
-            const n = &self.n;
+        fn integratedQ(p: f64) f64 {
+            const pi = std.math.pi;
 
-            // zig fmt: off
-            return q[i] + d / (n[i + 1] - n[i - 1]) * (
-                (n[i] - n[i - 1] + d) * (q[i + 1] - q[i]) / (n[i + 1] - n[i]) +
-                (n[i + 1] - n[i] - d) * (q[i] - q[i - 1]) / (n[i] - n[i - 1])
-            );
-            // zig fmt: on
+            return (@sin(@min(p, compression) * pi / compression - pi / 2.0) + 1.0) / 2.0;
         }
 
-        fn linear(self: *const @This(), i: usize, d: f64) f64 {
-            const q = &self.q;
-            const n = &self.n;
+        fn integratedLocation(q: f64) f64 {
+            const pi = std.math.pi;
+            const asin = std.math.asin;
 
-            const d_u: isize = @intFromFloat(d);
-
-            const du_idx: usize = @intCast(@as(isize, @intCast(i)) + d_u);
-
-            return q[i] + d * (q[du_idx] - q[i]) / (n[du_idx] - n[i]);
-        }
-
-        pub fn percentile(self: *const @This()) f64 {
-            const count = self.count;
-            const q = &self.q;
-
-            assert(self.isValid());
-
-            return if (count <= 5) blk: {
-                @branchHint(.unlikely);
-
-                const count_f: f64 = @floatFromInt(count);
-                const idx: usize = @intFromFloat(@floor(p * count_f));
-
-                break :blk q[idx];
-            } else q[2];
-        }
-
-        pub fn min(self: *const @This()) f64 {
-            assert(self.isValid());
-
-            return self.q[0];
-        }
-        pub fn max(self: *const @This()) f64 {
-            const count = self.count;
-            const q = &self.q;
-
-            assert(self.isValid());
-
-            return if (count < 5)
-                q[count - 1]
-            else
-                q[4];
-        }
-
-        pub fn isValid(self: *const @This()) bool {
-            return self.count > 0;
+            return compression * (asin(2 * q - 1) + pi / 2.0) / pi;
         }
     };
 }
 
-test P2Quantiles {
-    var rng = std.Random.DefaultPrng.init(0xdeadbeef);
-    const rand = rng.random();
+test TDigest {
+    var list = [_]f64{
+        10109,
+        5891,
+        160,
+        1473,
+        251,
+        50,
+        10991,
+        40,
+        50,
+        40,
+        50,
+        40,
+        40,
+        30,
+        30,
+        1293,
+        40,
+        70,
+        3597,
+        1233,
+        7714,
+        1473,
+        461,
+        1543,
+        5691,
+        1112,
+        400,
+        1873,
+        6672,
+        471,
+        2074,
+        7484,
+        471,
+        1763,
+        10920,
+        1342,
+        451,
+        1923,
+        14417,
+        1362,
+        491,
+        2425,
+        23224,
+        611,
+        1944,
+        44484,
+        999999,
+    };
 
-    for (0..100) |_| {
-        var estimator = P2Quantiles(0.5).init;
-        var timer = std.time.Timer.start() catch unreachable;
-        for (0..1_000_000) |_| {
-            estimator.add(rand.floatNorm(f64));
-        }
-        const tim = timer.read();
+    _ = &list;
+    // std.sort.insertion(f64, &list, {}, std.sort.asc(f64));
 
-        std.debug.print("res: {?d} : {d} us\n{any}\n", .{ estimator.percentile(), tim / std.time.ns_per_us, estimator });
+    var prng = std.Random.DefaultPrng.init(0xbadc0de);
+    const rand = prng.random();
+
+    var td10 = TDigest(10).init;
+    var td50 = TDigest(50).init;
+    var td100 = TDigest(100).init;
+    var td1000 = TDigest(1000).init;
+    for (0..1_000_000 + 1) |_| {
+        const v = rand.floatNorm(f64);
+
+        td10.add(v);
+        td50.add(v);
+        td100.add(v);
+        td1000.add(v);
+
+        // td10.add(@floatFromInt(v));
+        // td50.add(@floatFromInt(v));
+        // td1000.add(@floatFromInt(v));
     }
+
+    std.debug.print("td10 ({d})\n", .{td10.getOutliers()});
+    std.debug.print("min: {d}; p50: {d}; max: {d}\n", .{ td10.getMin(), td10.quantile(0.50), td10.getMax() });
+    std.debug.print("min: {d}; p90: {d}; max: {d}\n", .{ td10.getMin(), td10.quantile(0.90), td10.getMax() });
+    std.debug.print("min: {d}; p99: {d}; max: {d}\n", .{ td10.getMin(), td10.quantile(0.99), td10.getMax() });
+
+    std.debug.print("td50 ({d})\n", .{td50.getOutliers()});
+    std.debug.print("min: {d}; p50: {d}; max: {d}\n", .{ td50.getMin(), td50.quantile(0.50), td50.getMax() });
+    std.debug.print("min: {d}; p90: {d}; max: {d}\n", .{ td50.getMin(), td50.quantile(0.90), td50.getMax() });
+    std.debug.print("min: {d}; p99: {d}; max: {d}\n", .{ td50.getMin(), td50.quantile(0.99), td50.getMax() });
+
+    std.debug.print("td100 ({d})\n", .{td100.getOutliers()});
+    std.debug.print("min: {d}; p50: {d}; max: {d}\n", .{ td100.getMin(), td100.quantile(0.100), td100.getMax() });
+    std.debug.print("min: {d}; p90: {d}; max: {d}\n", .{ td100.getMin(), td100.quantile(0.90), td100.getMax() });
+    std.debug.print("min: {d}; p99: {d}; max: {d}\n", .{ td100.getMin(), td100.quantile(0.99), td100.getMax() });
+
+    std.debug.print("td1000 ({d})\n", .{td1000.getOutliers()});
+    std.debug.print("min: {d}; p50: {d}; max: {d}\n", .{ td1000.getMin(), td1000.quantile(0.50), td1000.getMax() });
+    std.debug.print("min: {d}; p90: {d}; max: {d}\n", .{ td1000.getMin(), td1000.quantile(0.90), td1000.getMax() });
+    std.debug.print("min: {d}; p99: {d}; max: {d}\n", .{ td1000.getMin(), td1000.quantile(0.99), td1000.getMax() });
 }
 
 pub const Unit = enum {
@@ -243,69 +410,43 @@ pub const Unit = enum {
 };
 
 pub const Tally = struct {
-    p50: P2Quantiles(0.50) = .init,
-    p90: P2Quantiles(0.90) = .init,
-    p99: P2Quantiles(0.99) = .init,
-    outliers: usize = 0,
+    tdigest: TDigest(50) = .init,
 
     pub const init: Tally = .{};
 
     pub fn add(self: *@This(), value: f64) void {
-        self.p50.add(value);
-        self.p90.add(value);
-        self.p99.add(value);
-
-        if (self.getCount() < 5) return;
-
-        // MAD: https://en.wikipedia.org/wiki/Median_absolute_deviation
-        const tall_to_mad = 1.2816 * 1.4826;
-        const threshold = 3;
-
-        const p50 = self.getP50();
-        const p90 = self.getP90();
-        const mad = (p90 - p50) / tall_to_mad;
-
-        const lower = p50 - threshold * mad;
-        const upper = p50 + threshold * mad;
-
-        if (value < lower or value > upper) self.outliers += 1;
+        self.tdigest.add(value);
     }
 
-    pub fn getOutliers(self: *const @This()) f64 {
-        return (@as(f64, @floatFromInt(self.outliers)) / @as(f64, @floatFromInt(self.getCount()))) * 100;
+    pub fn getOutliers(self: *@This()) f64 {
+        return @floatFromInt(self.tdigest.getOutliers());
     }
 
-    pub fn getMin(self: *const @This()) f64 {
-        return self.p50.min();
+    pub fn getMin(self: *@This()) f64 {
+        return self.tdigest.getMin();
     }
 
-    pub fn getP50(self: *const @This()) f64 {
-        return self.p50.percentile();
+    pub fn getP50(self: *@This()) f64 {
+        return self.tdigest.quantile(0.50);
     }
 
-    pub fn getP90(self: *const @This()) f64 {
-        return self.p90.percentile();
+    pub fn getP90(self: *@This()) f64 {
+        return self.tdigest.quantile(0.90);
     }
 
-    pub fn getP99(self: *const @This()) f64 {
-        return self.p99.percentile();
+    pub fn getP99(self: *@This()) f64 {
+        return self.tdigest.quantile(0.99);
     }
 
-    pub fn getMax(self: *const @This()) f64 {
-        return self.p50.max();
+    pub fn getMax(self: *@This()) f64 {
+        return self.tdigest.getMax();
     }
 
-    pub fn getCount(self: *const @This()) usize {
-        return self.p50.count;
+    pub fn getCount(self: *@This()) usize {
+        return @intFromFloat(self.tdigest.count());
     }
 
-    pub fn isValid(self: *const @This()) bool {
-        return self.p50.isValid();
-    }
-
-    pub fn zonable(self: *const Tally) Zonable {
-        assert(self.isValid());
-
+    pub fn zonable(self: *Tally) Zonable {
         return .{
             .outliers = self.getOutliers(),
             .min = self.getMin(),
@@ -317,12 +458,14 @@ pub const Tally = struct {
     }
 
     pub const Zonable = struct {
-        outliers: f64,
-        min: f64,
-        p50: f64,
-        p90: f64,
-        p99: f64,
-        max: f64,
+        outliers: f64 = 0,
+        min: f64 = 0,
+        p50: f64 = 0,
+        p90: f64 = 0,
+        p99: f64 = 0,
+        max: f64 = 0,
+
+        pub const init: Zonable = .{};
     };
 };
 
@@ -374,8 +517,8 @@ pub const LazyTally = struct {
         return self.tally.?.isValid();
     }
 
-    pub fn zonable(self: *const LazyTally) ?Tally.Zonable {
-        return if (self.tally) |t| t.zonable() else null;
+    pub fn zonable(self: *LazyTally) ?Tally.Zonable {
+        return if (self.tally) |*t| t.zonable() else null;
     }
 };
 
@@ -391,7 +534,7 @@ pub const FallableTally = struct {
         self.failure.add(value);
     }
 
-    pub fn zonable(self: *const FallableTally) Zonable {
+    pub fn zonable(self: *FallableTally) Zonable {
         return .{
             .success = self.success.zonable(),
             .failure = self.failure.zonable(),
