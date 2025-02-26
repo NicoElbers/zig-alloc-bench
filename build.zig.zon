@@ -14,6 +14,7 @@
         "src",
         "tests",
         "constructors",
+        "playback",
         "externals.zig",
         "external_allocators",
         "README.md",
