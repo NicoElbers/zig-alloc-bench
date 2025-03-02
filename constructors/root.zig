@@ -23,7 +23,9 @@ pub const default = [_]ContructorInformation{
     },
     .{
         .name = "rpmalloc",
-        .characteristics = .default,
+        // Due to rpmalloc me not propery setting up rpmalloc (idk how to),
+        // multithreading does not work
+        .characteristics = .{ .thread_safe = false },
         .constr_fn = &rpmallocAllocator,
     },
 } ++ libc_allocator ++ jemalloc ++ mimalloc;

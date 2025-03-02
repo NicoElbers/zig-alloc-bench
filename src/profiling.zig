@@ -72,16 +72,14 @@ pub const Profiling = struct {
 /// allocator used for it's own allocations
 pub const ProfilingAllocator = struct {
     allocator_under_test: Allocator,
-
-    timer: Timer,
     profiling: *Profiling,
+    lock: Mutex = .{},
 
     const Self = @This();
 
     pub fn init(allocator_under_test: Allocator, profiling: *Profiling) Self {
         return .{
             .allocator_under_test = allocator_under_test,
-            .timer = std.time.Timer.start() catch @panic("Must suppport timer"),
             .profiling = profiling,
         };
     }
@@ -101,14 +99,19 @@ pub const ProfilingAllocator = struct {
     fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
-        self.timer.reset();
+        var timer = Timer.start() catch unreachable;
         const maybe_ptr = self.allocator_under_test.rawAlloc(len, alignment, ret_addr);
-        const time = self.timer.read();
+        const time = timer.read();
 
-        if (maybe_ptr) |_| {
-            self.profiling.allocations.addSuccess(@floatFromInt(time));
-        } else {
-            self.profiling.allocations.addFailure(@floatFromInt(time));
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            if (maybe_ptr) |_| {
+                self.profiling.allocations.addSuccess(@floatFromInt(time));
+            } else {
+                self.profiling.allocations.addFailure(@floatFromInt(time));
+            }
         }
 
         return maybe_ptr;
@@ -117,14 +120,19 @@ pub const ProfilingAllocator = struct {
     fn resize(ctx: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
-        self.timer.reset();
+        var timer = Timer.start() catch unreachable;
         const did_resize = self.allocator_under_test.rawResize(buf, alignment, new_len, ret_addr);
-        const time = self.timer.read();
+        const time = timer.read();
 
-        if (did_resize) {
-            self.profiling.resizes.addSuccess(@floatFromInt(time));
-        } else {
-            self.profiling.resizes.addFailure(@floatFromInt(time));
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            if (did_resize) {
+                self.profiling.resizes.addSuccess(@floatFromInt(time));
+            } else {
+                self.profiling.resizes.addFailure(@floatFromInt(time));
+            }
         }
 
         return did_resize;
@@ -133,14 +141,19 @@ pub const ProfilingAllocator = struct {
     fn remap(ctx: *anyopaque, mem: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
-        self.timer.reset();
+        var timer = Timer.start() catch unreachable;
         const maybe_ptr = self.allocator_under_test.rawRemap(mem, alignment, new_len, ret_addr);
-        const time = self.timer.read();
+        const time = timer.read();
 
-        if (maybe_ptr) |_| {
-            self.profiling.remaps.addSuccess(@floatFromInt(time));
-        } else {
-            self.profiling.remaps.addFailure(@floatFromInt(time));
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            if (maybe_ptr) |_| {
+                self.profiling.remaps.addSuccess(@floatFromInt(time));
+            } else {
+                self.profiling.remaps.addFailure(@floatFromInt(time));
+            }
         }
 
         return maybe_ptr;
@@ -149,11 +162,16 @@ pub const ProfilingAllocator = struct {
     fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
         const self: *ProfilingAllocator = @ptrCast(@alignCast(ctx));
 
-        self.timer.reset();
+        var timer = Timer.start() catch unreachable;
         self.allocator_under_test.rawFree(buf, alignment, ret_addr);
-        const time = self.timer.read();
+        const time = timer.read();
 
-        self.profiling.frees.add(@floatFromInt(time));
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            self.profiling.frees.add(@floatFromInt(time));
+        }
     }
 };
 
@@ -166,5 +184,6 @@ const Alignment = std.mem.Alignment;
 const Tally = statistics.Tally;
 const LazyTally = statistics.LazyTally;
 const FallableTally = statistics.FallableTally;
+const Mutex = std.Thread.Mutex;
 
 const assert = std.debug.assert;

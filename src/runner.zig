@@ -44,6 +44,10 @@ pub const TestCharacteristics = struct {
 
     pub const default: TestCharacteristics = .{};
 
+    pub const multi_threaded: TestCharacteristics = .{
+        .multithreaded = true,
+    };
+
     pub const Failure = union(enum) {
         no_failure,
         any_failure,
