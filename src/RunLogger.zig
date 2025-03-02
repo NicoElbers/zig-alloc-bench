@@ -665,6 +665,18 @@ pub fn runSuccess(
     run_info: *Run,
     prof: ?Profiling.Zonable,
 ) !void {
+    if (self.opts.cli) {
+        const stdout = std.io.getStdOut();
+        const color = std.io.tty.detectConfig(stdout);
+        const writer = stdout.writer();
+
+        try color.setColor(writer, .green);
+        try writer.print("Success ({d})\n", .{run_info.runs});
+        try color.setColor(writer, .reset);
+    }
+
+    if (self.opts.type == .testing) return;
+
     try arg_run.constrs.append(alloc, .{
         .constr_info = constr_info.zonable(),
         .run = run_info.zonable(),
@@ -672,16 +684,6 @@ pub fn runSuccess(
     });
 
     if (self.opts.disk) try updateFile(self, alloc);
-
-    if (!self.opts.cli) return;
-
-    const stdout = std.io.getStdOut();
-    const color = std.io.tty.detectConfig(stdout);
-    const writer = stdout.writer();
-
-    try color.setColor(writer, .green);
-    try writer.print("Success ({d})\n", .{run_info.runs});
-    try color.setColor(writer, .reset);
 }
 
 fn updateFile(self: *Self, alloc: Allocator) !void {

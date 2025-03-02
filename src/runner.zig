@@ -47,7 +47,15 @@ pub const TestCharacteristics = struct {
     pub const Failure = union(enum) {
         no_failure,
         any_failure,
-        term: process.Term,
+        err: anyerror,
+
+        pub fn equals(self: Failure, err: anyerror) bool {
+            return switch (self) {
+                .no_failure => false,
+                .any_failure => true,
+                .err => |e| e == err,
+            };
+        }
     };
 
     pub fn zonable(self: TestCharacteristics) Zonable {
@@ -200,51 +208,6 @@ pub fn runAll(
 
     std.log.info("Running {d} permutations", .{filter.countSurviving(tests, constrs)});
 
-    // Minimal, single threaded, single process version of the runner
-    if (opts.debug) {
-        tests: for (tests) |test_info| {
-            if (filter.filterTest(test_info)) continue :tests;
-
-            var iter = test_info.arg.iter();
-
-            while (iter.next()) |arg| {
-                constrs: for (constrs) |constr_info| {
-                    if (filter.filterCombination(test_info, constr_info)) continue :constrs;
-
-                    var prof: Profiling = .init;
-                    var current_run: Run = .init;
-
-                    const test_opts: TestOpts = .{
-                        .type = opts.type,
-                        .test_fn = test_info.test_fn,
-                        .timeout_ns = test_info.timeout_ns,
-                        .tty = opts.tty,
-                        .profiling = &prof,
-                        .arg = arg,
-                    };
-
-                    const rerun: Rerun = if (opts.type == .testing)
-                        .once
-                    else
-                        test_info.rerun;
-
-                    const status = try rerun.runMany(
-                        alloc,
-                        constr_info.constr_fn,
-                        test_opts,
-                        &current_run,
-                    );
-
-                    switch (status) {
-                        .success => {},
-                        .failure => {},
-                    }
-                }
-            }
-        }
-        return;
-    }
-
     var logger: RunLogger = try .init(alloc, .{
         .type = opts.type,
         .cli = !opts.quiet,
@@ -304,7 +267,7 @@ pub fn runAll(
                     .success => |prof| {
                         switch (test_info.charactaristics.failure) {
                             .no_failure => {},
-                            .any_failure, .term => {
+                            .any_failure, .err => {
                                 try logger.runFail("Success", 0);
                                 continue :constrs;
                             },
@@ -334,7 +297,9 @@ pub fn runAll(
                                 try logger.testSuccess();
                                 continue :constrs;
                             },
-                            .term => |t| if (std.meta.eql(t, stats.term)) {
+                            .err => |e| if (StatusCode.toStatus(e) !=
+                                StatusCode.codeToStatus(@truncate(stats.term.code())))
+                            {
                                 try logger.testSuccess();
                                 continue :constrs;
                             } else "Incorrect error",
@@ -423,13 +388,15 @@ pub const Rerun = struct {
 
             defer ret.deinit();
 
-            current_run.runs += 1;
-            current_run.time.add(@floatFromInt(ret.performance.wall_time));
-            current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
-            current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
+            if (test_opts.type != .testing) {
+                current_run.runs += 1;
+                current_run.time.add(@floatFromInt(ret.performance.wall_time));
+                current_run.cache_misses.add(ret.performance.perf.getCacheMissPercent());
+                current_run.max_rss.add(@floatFromInt(ret.rusage.maxrss * 1024));
 
-            if (prof) |*p| {
-                p.add(ret.profiling.?);
+                if (prof) |*p| {
+                    p.add(ret.profiling.?);
+                }
             }
         }
 
