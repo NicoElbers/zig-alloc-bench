@@ -44,7 +44,7 @@ pub const default = correctness ++ [_]TestInformation{
         .test_fn = &appendAccessArray,
         .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
     },
-} ++ playback.playback;
+} ++ mimalloc_bench.mimalloc_bench ++ playback.playback;
 
 pub const correctness = [_]TestInformation{
     .{
@@ -274,6 +274,7 @@ const std = @import("std");
 const runner = @import("runner");
 const common = @import("common.zig");
 const playback = @import("playback.zig");
+const mimalloc_bench = @import("mimalloc-bench.zig");
 
 const assert = std.debug.assert;
 const allocRange = common.allocRange;
