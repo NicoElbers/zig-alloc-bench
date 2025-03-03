@@ -27,6 +27,49 @@ pub const mimalloc_bench = [_]TestInformation{
             .run_for_ns = std.time.ns_per_s * 10,
         },
     },
+
+    .{
+        .name = "glibc Main arena",
+        .test_fn = &glibcMainArena,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 15,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+    },
+    .{
+        .name = "glibc Threaded",
+        .test_fn = &glibcThreaded,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 15,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+    },
+    .{
+        .name = "glibc Main arena with thread",
+        .test_fn = &glibcMainArenaThreaded,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 15,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+    },
 };
 
 fn cacheScratch1(alloc: Allocator, arg: ArgInt) !void {
@@ -55,6 +98,24 @@ fn cacheScratchN(alloc: Allocator, arg: ArgInt) !void {
         .repetitions = 2_000_000,
         .concurrency = cpu,
     });
+}
+
+fn glibcMainArena(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchMainArena;
+
+    try run(alloc, arg);
+}
+
+fn glibcThreaded(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchThreaded;
+
+    try run(alloc, arg);
+}
+
+fn glibcMainArenaThreaded(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchMainWithThread;
+
+    try run(alloc, arg);
 }
 
 const std = @import("std");
