@@ -44,6 +44,20 @@ pub const default = correctness ++ [_]TestInformation{
         .test_fn = &appendAccessArray,
         .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
     },
+    .{
+        .name = "Evicting array",
+        .test_fn = &evictingArray,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 10,
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+        .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
+    },
 } ++ mimalloc_bench.mimalloc_bench ++ playback.playback;
 
 pub const correctness = [_]TestInformation{
@@ -270,6 +284,19 @@ fn pageAlign(alloc: Allocator, _: ArgInt) !void {
     allocator.free(slice);
 }
 
+fn evictingArray(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("evictingArray.zig").run;
+
+    // Maximally allocate 1Gi
+    try run(alloc, .{
+        .min_size = 8,
+        .max_size = 1 << 15, // 32ki
+        .chunks = 1 << 15, // 32Ki
+        .num_rounds = 100,
+        .thread_count = arg,
+    });
+}
+
 const std = @import("std");
 const runner = @import("runner");
 const common = @import("common.zig");
@@ -285,3 +312,4 @@ const TestInformation = runner.TestInformation;
 const ArgInt = runner.TestArg.ArgInt;
 const Random = std.Random;
 const Alignment = std.mem.Alignment;
+const Thread = std.Thread;
