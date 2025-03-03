@@ -13,6 +13,7 @@ pub fn build(b: *Build) void {
 
     const selfhosted = b.option(bool, "selfhosted", "Use the selfhosted compiler") orelse false;
     const external = b.option(bool, "external", "Link in external allocators") orelse true;
+    const use_libc = b.option(bool, "useLibc", "Link in external allocators") orelse true;
 
     const runner_mod = runner(b, target, optimize);
 
@@ -20,23 +21,24 @@ pub fn build(b: *Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = use_libc,
     });
     exe_mod.addImport("runner", runner_mod);
     exe_mod.addImport("tests", tests(b, runner_mod, target, optimize));
 
     const opts = b.addOptions();
 
-    const can_link_externals = external and
-        isExternalsInstalled() and
+    const can_link_externals = use_libc and external and isExternalsInstalled() and
         target.result.dynamic_linker.eql(native_target.result.dynamic_linker);
 
-    const constr_mod = constructors(b, runner_mod, target, optimize);
+    const constr_mod = constructors(b, use_libc, runner_mod, target, optimize);
+
+    // Add externals
+    opts.addOption(bool, "use_libc", use_libc);
     opts.addOption(bool, "jemalloc", can_link_externals);
     opts.addOption(bool, "mimalloc", can_link_externals);
 
     constr_mod.addOptions("config", opts);
-
     if (can_link_externals) {
         std.log.info("Adding jemalloc", .{});
         constr_mod.addImport("jemalloc", jemalloc(b, target, optimize));
@@ -106,7 +108,7 @@ pub fn tests(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optim
     return tests_mod;
 }
 
-pub fn constructors(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+pub fn constructors(b: *Build, use_libc: bool, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
     const rpmalloc = b.dependency("rpmalloc", .{
         .target = target,
         .optimize = optimize,
@@ -116,10 +118,13 @@ pub fn constructors(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget
         .root_source_file = b.path("constructors/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = use_libc,
     });
-
-    constructors_mod.addImport("rpmalloc", rpmalloc.module("bindings"));
     constructors_mod.addImport("runner", runner_mod);
+
+    if (use_libc) {
+        constructors_mod.addImport("rpmalloc", rpmalloc.module("bindings"));
+    }
 
     return constructors_mod;
 }

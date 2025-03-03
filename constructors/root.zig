@@ -21,14 +21,7 @@ pub const default = [_]ContructorInformation{
         .characteristics = .default,
         .constr_fn = &binnedAllocator,
     },
-    .{
-        .name = "rpmalloc",
-        // Due to rpmalloc me not propery setting up rpmalloc (idk how to),
-        // multithreading does not work
-        .characteristics = .{ .thread_safe = false },
-        .constr_fn = &rpmallocAllocator,
-    },
-} ++ libc_allocator ++ jemalloc ++ mimalloc;
+} ++ libc_allocator ++ jemalloc ++ mimalloc ++ rpmalloc;
 
 fn stdSmpAllocator(opts: TestOpts) !void {
     const smp: Allocator = .{
@@ -73,10 +66,20 @@ fn binnedAllocator(opts: TestOpts) !void {
     return runner.run(binned.allocator(), opts);
 }
 
+pub const rpmalloc = if (config.mimalloc)
+    [_]ContructorInformation{.{
+        .name = "rpmalloc",
+        // Due to rpmalloc me not propery setting up rpmalloc (idk how to),
+        // multithreading does not work
+        .characteristics = .{ .thread_safe = false },
+        .constr_fn = &rpmallocAllocator,
+    }}
+else
+    [_]ContructorInformation{};
+
 fn rpmallocAllocator(opts: TestOpts) !void {
-    const rpmalloc = @import("rpmalloc.zig");
-    const alloc = rpmalloc.init();
-    defer rpmalloc.deinit();
+    const alloc = @import("rpmalloc.zig").init();
+    defer @import("rpmalloc.zig").deinit();
 
     return runner.run(alloc, opts);
 }
@@ -111,7 +114,7 @@ fn mimallocAllocator(opts: TestOpts) !void {
     return runner.run(alloc, opts);
 }
 
-pub const libc_allocator = if (link_libc)
+pub const libc_allocator = if (config.use_libc)
     [_]ContructorInformation{.{
         .name = @tagName(abi) ++ " libc",
         .characteristics = .default,
@@ -124,6 +127,13 @@ fn libcAllocator(opts: TestOpts) !void {
     const alloc = std.heap.c_allocator;
 
     return runner.run(alloc, opts);
+}
+
+fn optional(comptime cond: bool, info: ContructorInformation) []const ContructorInformation {
+    return if (cond)
+        &.{info}
+    else
+        &.{};
 }
 
 const std = @import("std");
