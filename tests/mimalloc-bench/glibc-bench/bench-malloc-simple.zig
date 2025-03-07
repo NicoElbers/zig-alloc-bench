@@ -54,30 +54,30 @@ fn doBenchmark(alloc: Allocator, args: Args) !void {
     }
 }
 
-pub fn benchMainArena(alloc: Allocator, arg: usize) !void {
+pub fn benchMainArena(alloc: Allocator, size: usize) !void {
     const arr = try alloc.alloc([]u8, max_allocs);
     defer alloc.free(arr);
 
     for (0..num_allocs) |_|
         try doBenchmark(alloc, .{
             .arr = arr,
-            .size = arg,
+            .size = size,
         });
 }
 
-fn threadTest(alloc: Allocator, arr: [][]u8, arg: usize) !void {
+fn threadTest(alloc: Allocator, arr: [][]u8, size: usize) !void {
     for (0..num_allocs) |_|
         try doBenchmark(alloc, .{
             .arr = arr,
-            .size = arg,
+            .size = size,
         });
 }
 
-pub fn benchThreaded(alloc: Allocator, arg: usize) !void {
+pub fn benchThreaded(alloc: Allocator, size: usize) !void {
     const arr = try alloc.alloc([]u8, max_allocs);
     defer alloc.free(arr);
 
-    const thread = try Thread.spawn(.{}, threadTest, .{ alloc, arr, arg });
+    const thread = try Thread.spawn(.{}, threadTest, .{ alloc, arr, size });
     thread.join();
 }
 
@@ -86,7 +86,7 @@ fn singleAlloc(alloc: Allocator) !void {
     alloc.free(foo);
 }
 
-pub fn benchMainWithThread(alloc: Allocator, arg: usize) !void {
+pub fn benchMainWithThread(alloc: Allocator, size: usize) !void {
     const arr = try alloc.alloc([]u8, max_allocs);
     defer alloc.free(arr);
 
@@ -96,42 +96,8 @@ pub fn benchMainWithThread(alloc: Allocator, arg: usize) !void {
     for (0..num_allocs) |_|
         try doBenchmark(alloc, .{
             .arr = arr,
-            .size = arg,
+            .size = size,
         });
-}
-
-pub fn bench(alloc: Allocator, arg: usize) !void {
-    const iters = num_iters;
-    var tests: [3][num_allocs]Args = undefined;
-
-    const arr = try alloc.alloc([]u8, max_allocs);
-    defer alloc.free(arr);
-
-    for (&tests, 0..) |*inner, t| {
-        for (0..num_allocs) |i| {
-            inner[i] = .{
-                .iters = iters,
-                .size = arg,
-                .arr = arr,
-            };
-
-            // Do a quick warmup
-            if (t == 0)
-                try doBenchmark(alloc, &inner[i]);
-        }
-    }
-
-    // Run benchmark single threaded in main_arena.
-    for (&tests[0]) |*tst|
-        try doBenchmark(alloc, tst);
-
-    // Run benchmark in a thread_arena.
-    const thread = try Thread.spawn(.{}, threadTest, .{ alloc, &tests[2] });
-    thread.join();
-
-    // Repeat benchmark in main_arena with SINGLE_THREAD_P == false
-    for (&tests[1]) |*tst|
-        try doBenchmark(alloc, tst);
 }
 
 const std = @import("std");
