@@ -1,4 +1,4 @@
-pub const mimalloc_bench = [_]TestInformation{
+pub const tests = [_]TestInformation{
     // Cache
     .{
         .name = "cache scratch 1",

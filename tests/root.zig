@@ -58,7 +58,7 @@ pub const default = correctness ++ [_]TestInformation{
         },
         .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
     },
-} ++ mimalloc_bench.mimalloc_bench ++ playback.playback;
+} ++ mimalloc_bench.tests ++ playback.tests;
 
 pub const correctness = [_]TestInformation{
     .{
