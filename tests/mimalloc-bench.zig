@@ -72,26 +72,10 @@ pub const tests = [_]TestInformation{
             .run_for_ns = std.time.ns_per_s * 1,
         },
     },
-
-    // mstress
-    .{
-        .name = "mstress",
-        .test_fn = &mstress,
-        .charactaristics = .{
-            .multithreaded = true,
-            .long_running = true,
-            .testing = true,
-        },
-        .timeout_ns = std.time.ns_per_s * 20,
-        .rerun = .{
-            .run_at_least = 1,
-            .run_for_ns = 0,
-        },
-    },
 };
 
 fn cacheScratch1(alloc: Allocator, arg: ArgInt) !void {
-    const run = @import("mimalloc-bench/cache-scratch/cache-scratch.zig").run;
+    const run = @import("cache-scratch/cache-scratch.zig").run;
 
     const cpu = std.Thread.getCpuCount() catch 1;
 
@@ -105,7 +89,7 @@ fn cacheScratch1(alloc: Allocator, arg: ArgInt) !void {
 }
 
 fn cacheScratchN(alloc: Allocator, arg: ArgInt) !void {
-    const run = @import("mimalloc-bench/cache-scratch/cache-scratch.zig").run;
+    const run = @import("cache-scratch/cache-scratch.zig").run;
 
     const cpu = std.Thread.getCpuCount() catch 1;
 
@@ -119,34 +103,21 @@ fn cacheScratchN(alloc: Allocator, arg: ArgInt) !void {
 }
 
 fn glibcMainArena(alloc: Allocator, arg: ArgInt) !void {
-    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchMainArena;
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchMainArena;
 
     try run(alloc, arg);
 }
 
 fn glibcThreaded(alloc: Allocator, arg: ArgInt) !void {
-    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchThreaded;
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchThreaded;
 
     try run(alloc, arg);
 }
 
 fn glibcMainArenaThreaded(alloc: Allocator, arg: ArgInt) !void {
-    const run = @import("mimalloc-bench/glibc-bench/bench-malloc-simple.zig").benchMainWithThread;
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchMainWithThread;
 
     try run(alloc, arg);
-}
-
-fn mstress(alloc: Allocator, _: ArgInt) !void {
-    const run = @import("mimalloc-bench/mstress/mstress.zig").run;
-
-    const cpu = std.Thread.getCpuCount() catch 1;
-
-    try run(alloc, .{
-        .thread_count = cpu,
-        .scale = 50,
-        .iter = 100,
-        .transfer_count = 1000,
-    });
 }
 
 const std = @import("std");
