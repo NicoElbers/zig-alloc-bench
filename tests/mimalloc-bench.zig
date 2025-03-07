@@ -7,8 +7,8 @@ pub const tests = [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 20 * 999,
-        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 5 } },
+        .timeout_ns = std.time.ns_per_s * 20,
+        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 4 } },
         .rerun = .{
             .run_at_least = 1,
             .run_for_ns = std.time.ns_per_s * 10,
@@ -21,8 +21,8 @@ pub const tests = [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 20 * 999,
-        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 5 } },
+        .timeout_ns = std.time.ns_per_s * 20,
+        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 4 } },
         .rerun = .{
             .run_at_least = 1,
             .run_for_ns = std.time.ns_per_s * 10,
@@ -37,11 +37,11 @@ pub const tests = [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 15,
+        .timeout_ns = std.time.ns_per_s * 1,
         .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s * 10,
+            .run_for_ns = std.time.ns_per_s * 1,
         },
     },
     .{
@@ -51,11 +51,11 @@ pub const tests = [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 15,
+        .timeout_ns = std.time.ns_per_s * 1,
         .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s * 10,
+            .run_for_ns = std.time.ns_per_s * 1,
         },
     },
     .{
@@ -65,11 +65,11 @@ pub const tests = [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 15,
+        .timeout_ns = std.time.ns_per_s * 1,
         .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s * 10,
+            .run_for_ns = std.time.ns_per_s * 1,
         },
     },
 
@@ -80,12 +80,12 @@ pub const tests = [_]TestInformation{
         .charactaristics = .{
             .multithreaded = true,
             .long_running = true,
+            .testing = true,
         },
-        .timeout_ns = std.time.ns_per_s * 15 * 30,
-        // .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .timeout_ns = std.time.ns_per_s * 20,
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s * 10,
+            .run_for_ns = 0,
         },
     },
 };
@@ -136,9 +136,7 @@ fn glibcMainArenaThreaded(alloc: Allocator, arg: ArgInt) !void {
     try run(alloc, arg);
 }
 
-fn mstress(alloc: Allocator, arg: ArgInt) !void {
-    _ = arg;
-
+fn mstress(alloc: Allocator, _: ArgInt) !void {
     const run = @import("mimalloc-bench/mstress/mstress.zig").run;
 
     const cpu = std.Thread.getCpuCount() catch 1;

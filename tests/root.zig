@@ -4,7 +4,7 @@ pub const default = correctness ++ [_]TestInformation{
         .test_fn = &firstAlloc,
         .arg = .{ .exponential = .{ .n = 20 } },
         .rerun = .{
-            .run_at_least = 100,
+            .run_at_least = 50,
             .run_for_ns = 0,
         },
     },
@@ -14,7 +14,7 @@ pub const default = correctness ++ [_]TestInformation{
         .timeout_ns = std.time.ns_per_s / 10,
         .arg = .{ .exponential = .{ .start = 64, .n = 14 } },
         .rerun = .{
-            .run_at_least = 0,
+            .run_at_least = 1,
             .run_for_ns = std.time.ns_per_s / 10,
         },
     },
@@ -22,27 +22,47 @@ pub const default = correctness ++ [_]TestInformation{
         .name = "Many allocations and frees",
         .test_fn = &manyAllocFree,
         .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
     },
     .{
         .name = "Many allocations, resizes and frees",
         .test_fn = &manyAllocResizeFree,
         .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
     },
     .{
         .name = "Many allocations, remaps and frees",
         .test_fn = &manyAllocRemapsFree,
         .timeout_ns = std.time.ns_per_s * 2,
         .arg = .{ .exponential = .{ .start = 1024, .n = 10 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
     },
     .{
         .name = "Appending to many arraylists",
         .test_fn = &appendingToMultipleArrayLists,
         .arg = .{ .exponential = .{ .start = 1, .n = 10 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
     },
     .{
         .name = "Random access append",
         .test_fn = &appendAccessArray,
         .arg = .{ .exponential = .{ .start = 1024, .n = 5 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 10,
+        },
     },
     .{
         .name = "Evicting array",
@@ -51,10 +71,10 @@ pub const default = correctness ++ [_]TestInformation{
             .multithreaded = true,
             .long_running = true,
         },
-        .timeout_ns = std.time.ns_per_s * 10,
+        .timeout_ns = std.time.ns_per_s * 5,
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s * 10,
+            .run_for_ns = std.time.ns_per_s * 5,
         },
         .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
     },
