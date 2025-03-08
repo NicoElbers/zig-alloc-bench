@@ -1,7 +1,8 @@
 Allocation benchmarks for the glibc library.
 Originals at: <https://github.com/bminor/glibc/tree/master/benchtests>
 
-```
+```GNU_Lesser_General_Public
+License
 Benchmark malloc and free functions.
 Copyright (C) 2013-2021 Free Software Foundation, Inc.
 This file is part of the GNU C Library.

@@ -3,7 +3,7 @@ some objects, re-allocating, and transferring objects between threads. This
 is not a typical program workload but uses a random size distribution -- do
 not use this test as a benchmark!
 
-```
+```MIT
 MIT License
 
 Copyright (c) 2019 Microsoft Corporation, Daan Leijen.
