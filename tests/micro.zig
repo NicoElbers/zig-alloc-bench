@@ -79,6 +79,27 @@ pub const micro = [_]TestInformation{
         },
     },
 
+    // Microbenchmarks
+    .{
+        .name = "Byte allocations",
+        .description =
+        \\ N threads allocating single bytes, where N is the argument. This 
+        \\ benchmark is meant to show how the allocator deals with many very small allocations
+        \\
+        ,
+        .test_fn = &byteAllocations,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
+        .timeout_ns = std.time.ns_per_s * 1,
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s / 5,
+        },
+    },
+
     // Other
     .{
         .name = "Binned allocations",
@@ -156,6 +177,36 @@ fn manyRemaps(alloc: Allocator, arg: ArgInt) !void {
         data[idx] = alloc.remap(data[idx], new_len) orelse data[idx];
         touchAllocation(rand, data[idx]);
     }
+}
+
+fn byteAllocationsThread(alloc: Allocator, list: []*u8) !void {
+    for (list) |*byte_ptr| byte_ptr.* = try alloc.create(u8);
+}
+
+fn byteAllocations(alloc: Allocator, thread_count: ArgInt) !void {
+    const total_allocations = 10_000_000; // Minimally ~76 Mb
+
+    const allocs_per_thread = total_allocations / thread_count;
+
+    // full byte list
+    const byte_list = try alloc.alloc(*u8, total_allocations);
+    defer alloc.free(byte_list);
+
+    const threads = try alloc.alloc(Thread, thread_count);
+    defer alloc.free(threads);
+
+    for (threads, 0..) |*t, i| {
+        // Ensure that every element in the list is indeed passed to a thread
+        const start = i * allocs_per_thread;
+        const end = if (i == threads.len - 1) byte_list.len else (i + 1) * allocs_per_thread;
+
+        const chunk = byte_list[start..end];
+
+        t.* = try Thread.spawn(.{}, byteAllocationsThread, .{ alloc, chunk });
+    }
+    for (threads) |thread| thread.join();
+
+    for (byte_list) |byte| alloc.destroy(byte);
 }
 
 fn allocBins(alloc: Allocator, arg: ArgInt) !void {
