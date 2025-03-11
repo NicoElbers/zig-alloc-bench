@@ -1,6 +1,7 @@
 pub const default =
     correctness ++
     micro ++
+    bench ++
     mimalloc ++
     playback;
 
@@ -8,6 +9,7 @@ pub const correctness = @import("correctness.zig").correctness;
 pub const micro = @import("micro.zig").micro;
 pub const mimalloc = @import("mimalloc-bench.zig").tests;
 pub const playback = @import("playback.zig").tests;
+pub const bench = @import("bench.zig").bench;
 
 const unused = [_]TestInformation{
     .{
