@@ -79,6 +79,44 @@ pub const micro = [_]TestInformation{
         },
     },
 
+    // Microbenchmarks on standard data structures
+    .{
+        .name = "Appending to ArrayList",
+        .description =
+        \\ N threads appending bytes to their own ArrayList, freeing it at the 
+        \\ end, where the argument is N.
+        \\
+        ,
+        .charactaristics = .{
+            .multithreaded = true,
+        },
+        .test_fn = &appendToArrayList,
+        .timeout_ns = std.time.ns_per_s * 2,
+        .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 5,
+        },
+    },
+    .{
+        .name = "Appending to LinkedList",
+        .description =
+        \\ N threads appending bytes to their own LinkedList, freeing it at the 
+        \\ end, where the argument is N.
+        \\
+        ,
+        .charactaristics = .{
+            .multithreaded = true,
+        },
+        .test_fn = &appendToLinkedList,
+        .timeout_ns = std.time.ns_per_s * 2,
+        .arg = .{ .exponential = .{ .start = 1, .n = 5 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 5,
+        },
+    },
+
     // Microbenchmarks
     .{
         .name = "Byte allocations",
@@ -209,6 +247,49 @@ fn byteAllocations(alloc: Allocator, thread_count: ArgInt) !void {
     for (byte_list) |byte| alloc.destroy(byte);
 }
 
+fn appendToArrayListThread(alloc: Allocator, count: ArgInt) !void {
+    var list = ArrayListUnmanaged(u8).empty;
+    defer list.deinit(alloc);
+
+    for (0..count) |_| try list.append(alloc, 0);
+}
+
+fn appendToArrayList(alloc: Allocator, thread_count: ArgInt) !void {
+    const to_append = 100_000_000;
+
+    const count_per_thread = to_append / thread_count;
+
+    const threads = try alloc.alloc(Thread, thread_count);
+    defer alloc.free(threads);
+
+    for (threads) |*t|
+        t.* = try Thread.spawn(.{}, appendToArrayListThread, .{ alloc, count_per_thread });
+    for (threads) |t| t.join();
+}
+
+fn appendToLinkedListThread(alloc: Allocator, count: ArgInt) !void {
+    const List = DoublyLinkedList(u8);
+    const Node = List.Node;
+
+    var list: List = .{};
+    defer while (list.pop()) |n| alloc.destroy(n);
+
+    for (0..count) |_| list.append(try alloc.create(Node));
+}
+
+fn appendToLinkedList(alloc: Allocator, thread_count: ArgInt) !void {
+    const to_append = 10_000_000;
+
+    const count_per_thread = to_append / thread_count;
+
+    const threads = try alloc.alloc(Thread, thread_count);
+    defer alloc.free(threads);
+
+    for (threads) |*t|
+        t.* = try Thread.spawn(.{}, appendToLinkedListThread, .{ alloc, count_per_thread });
+    for (threads) |t| t.join();
+}
+
 fn allocBins(alloc: Allocator, arg: ArgInt) !void {
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rand = prng.random();
@@ -248,3 +329,6 @@ const ArgInt = runner.TestArg.ArgInt;
 const Random = std.Random;
 const Alignment = std.mem.Alignment;
 const Thread = std.Thread;
+const WaitGroup = Thread.WaitGroup;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const DoublyLinkedList = std.DoublyLinkedList;
