@@ -117,6 +117,80 @@ pub const micro = [_]TestInformation{
         },
     },
 
+    // Microbenchmarks on the cache
+    .{
+        .name = "cache scratch 1",
+        .test_fn = &cacheScratch1,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 20,
+        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 4 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+    },
+    .{
+        .name = "cache scratch N",
+        .test_fn = &cacheScratchN,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 20,
+        .arg = .{ .list = &.{ 1, 1 << 3, 1 << 4 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 10,
+        },
+    },
+
+    // Glibc benchmarks
+    .{
+        .name = "glibc Main arena",
+        .test_fn = &glibcMainArena,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 1,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 1,
+        },
+    },
+    .{
+        .name = "glibc Threaded",
+        .test_fn = &glibcThreaded,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 1,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 1,
+        },
+    },
+    .{
+        .name = "glibc Main arena with thread",
+        .test_fn = &glibcMainArenaThreaded,
+        .charactaristics = .{
+            .multithreaded = true,
+            .long_running = true,
+        },
+        .timeout_ns = std.time.ns_per_s * 1,
+        .arg = .{ .exponential = .{ .start = 16, .n = 2 } },
+        .rerun = .{
+            .run_at_least = 1,
+            .run_for_ns = std.time.ns_per_s * 1,
+        },
+    },
+
     // Microbenchmarks
     .{
         .name = "Byte allocations",
@@ -288,6 +362,52 @@ fn appendToLinkedList(alloc: Allocator, thread_count: ArgInt) !void {
     for (threads) |*t|
         t.* = try Thread.spawn(.{}, appendToLinkedListThread, .{ alloc, count_per_thread });
     for (threads) |t| t.join();
+}
+
+fn cacheScratch1(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("cache-scratch/cache-scratch.zig").run;
+
+    const cpu = std.Thread.getCpuCount() catch 1;
+
+    try run(alloc, .{
+        .thread_count = 1,
+        .iterations = 1_000,
+        .obj_size = @truncate(arg),
+        .repetitions = 2_000_000,
+        .concurrency = cpu,
+    });
+}
+
+fn cacheScratchN(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("cache-scratch/cache-scratch.zig").run;
+
+    const cpu = std.Thread.getCpuCount() catch 1;
+
+    try run(alloc, .{
+        .thread_count = cpu,
+        .iterations = 1_000,
+        .obj_size = @truncate(arg),
+        .repetitions = 2_000_000,
+        .concurrency = cpu,
+    });
+}
+
+fn glibcMainArena(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchMainArena;
+
+    try run(alloc, arg);
+}
+
+fn glibcThreaded(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchThreaded;
+
+    try run(alloc, arg);
+}
+
+fn glibcMainArenaThreaded(alloc: Allocator, arg: ArgInt) !void {
+    const run = @import("glibc-bench/bench-malloc-simple.zig").benchMainWithThread;
+
+    try run(alloc, arg);
 }
 
 fn allocBins(alloc: Allocator, arg: ArgInt) !void {
