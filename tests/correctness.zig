@@ -156,8 +156,6 @@ fn mstress(alloc: Allocator, _: ArgInt) !void {
 const std = @import("std");
 const runner = @import("runner");
 const common = @import("common.zig");
-const playback = @import("playback.zig");
-const mimalloc_bench = @import("mimalloc-bench.zig");
 
 const assert = std.debug.assert;
 const allocRange = common.allocRange;
