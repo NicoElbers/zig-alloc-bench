@@ -144,7 +144,7 @@ pub fn run(path: [:0]const u8, alloc: Allocator) !void {
     };
 }
 
-pub const playback = [_]TestInformation{
+pub const tests = [_]TestInformation{
     .{
         .name = "Self playback",
         .test_fn = &selfPlayback,

@@ -1,5 +1,7 @@
 //! NOTE: This is a copy from https://gist.github.com/silversquirl/c1e4840048fdf48e669b6eac76d80634
 //! with minimal changes
+//!
+//! A bug was found in multithreaded leak reporting. Not fixing, simply disabling
 
 // BSD Zero Clause License
 //

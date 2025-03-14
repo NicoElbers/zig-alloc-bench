@@ -60,7 +60,7 @@ fn stdPageAllocator(opts: TestOpts) !void {
 }
 
 fn binnedAllocator(opts: TestOpts) !void {
-    var binned = @import("silversquirl_binned_allocator.zig").BinnedAllocator(.{}){};
+    var binned = @import("silversquirl_binned_allocator.zig").BinnedAllocator(.{ .report_leaks = false }){};
     defer binned.deinit();
 
     return runner.run(binned.allocator(), opts);

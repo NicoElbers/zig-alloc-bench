@@ -289,8 +289,13 @@ pub fn runAll(
                     .failure => |stats| {
                         defer stats.deinit();
 
+                        const stderr = std.io.getStdErr();
+
                         if (stats.term == .TimedOut) {
                             try logger.runTimeout();
+                            try dumpFile("stdout", stats.stdout, stderr);
+                            try dumpFile("stderr", stats.stderr, stderr);
+                            try dumpFile("Error", stats.err_pipe, stderr);
                             continue :constrs;
                         }
 
@@ -308,7 +313,6 @@ pub fn runAll(
                                 continue :constrs;
                             } else "Incorrect error",
                         };
-                        const stderr = std.io.getStdErr();
 
                         try logger.runFail(reason, stats.term.code());
                         try dumpFile("stdout", stats.stdout, stderr);
