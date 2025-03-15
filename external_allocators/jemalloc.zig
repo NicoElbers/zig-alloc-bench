@@ -50,11 +50,11 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, re
 
 fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
     _ = ctx;
-    _ = alignment;
     _ = ret_addr;
 
     assert(memory.len > 0);
-    jemalloc.je_free(memory.ptr);
+    assert(alignment.toByteUnits() > 0);
+    jemalloc.je_dallocx(memory.ptr, jemalloc.MALLOCX_ALIGN(alignment.toByteUnits()));
 }
 
 const std = @import("std");
