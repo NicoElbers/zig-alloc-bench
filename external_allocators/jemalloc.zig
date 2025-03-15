@@ -18,6 +18,8 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*
     _ = ctx;
     _ = ret_addr;
 
+    assert(len > 0);
+    assert(alignment.toByteUnits() > 0);
     if (jemalloc.je_mallocx(len, jemalloc.MALLOCX_ALIGN(alignment.toByteUnits()))) |ptr| {
         return @alignCast(@ptrCast(ptr));
     }
@@ -25,19 +27,24 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*
 }
 fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
     _ = ctx;
-    _ = alignment;
     _ = ret_addr;
 
-    const real_size = jemalloc.je_xallocx(memory.ptr, new_len, 0, 0);
-    return real_size >= new_len;
+    assert(new_len > 0);
+    assert(alignment.toByteUnits() > 0);
+    const real_size = jemalloc.je_xallocx(memory.ptr, new_len, 0, jemalloc.MALLOCX_ALIGN(alignment.toByteUnits()));
+
+    return real_size == new_len;
 }
 fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
     _ = ctx;
     _ = ret_addr;
 
-    if (jemalloc.rallocx(memory.ptr, new_len, jemalloc.MALLOCX_ALIGN(alignment.toByteUnits()))) |ptr| {
+    assert(new_len > 0);
+    assert(alignment.toByteUnits() > 0);
+    if (jemalloc.je_rallocx(memory.ptr, new_len, jemalloc.MALLOCX_ALIGN(alignment.toByteUnits()))) |ptr| {
         return @alignCast(@ptrCast(ptr));
     }
+
     return null;
 }
 
@@ -46,10 +53,13 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) vo
     _ = alignment;
     _ = ret_addr;
 
+    assert(memory.len > 0);
     jemalloc.je_free(memory.ptr);
 }
 
 const std = @import("std");
+
+const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
