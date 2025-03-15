@@ -36,26 +36,8 @@ const actions = [_]FullAction{
         .nix_path = "result",
         .action = .copy_file,
         .paths = .{
-            .in = &.{ "result", "lib", "libmimalloc.so.2.1" },
-            .out = &.{ external_dir_name, "mimalloc", "libmimalloc.so.2.1" },
-        },
-    },
-    .{
-        .nix = "mimalloc",
-        .nix_path = "result",
-        .action = .sym_link,
-        .paths = .{
-            .in = &.{ external_dir_name, "mimalloc", "libmimalloc.so" },
-            .out = &.{"libmimalloc.so.2.1"},
-        },
-    },
-    .{
-        .nix = "mimalloc",
-        .nix_path = "result",
-        .action = .sym_link,
-        .paths = .{
-            .in = &.{ external_dir_name, "mimalloc", "libmimalloc.so.2" },
-            .out = &.{"libmimalloc.so.2.1"},
+            .in = &.{ "result", "lib", "libmimalloc.a" },
+            .out = &.{ external_dir_name, "mimalloc", "libmimalloc.a" },
         },
     },
     .{

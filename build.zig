@@ -177,12 +177,7 @@ pub fn mimalloc(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode)
         .link_libc = true,
     });
 
-    mimalloc_mod.addLibraryPath(b.path("external/mimalloc"));
-    mimalloc_mod.linkSystemLibrary("mimalloc", .{
-        .needed = true,
-        .preferred_link_mode = .dynamic,
-    });
-
+    mimalloc_mod.addObjectFile(b.path("external/mimalloc/libmimalloc.a"));
     mimalloc_mod.addIncludePath(b.path("external/mimalloc/include"));
 
     return mimalloc_mod;
