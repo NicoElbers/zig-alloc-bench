@@ -1,186 +1,224 @@
-/// NOTE: This should be kept in sync with tool/RecordingAllocator.zig's implementation
-const Item = union(enum) {
-    allocation: Allocation,
-    remap: Remap,
-    resize: Resize,
-    free: Free,
+fn parse(arena: *ArenaAllocator, file_path: []const []const u8) !Body {
+    const alloc = arena.allocator();
 
-    const Allocation = struct { len: usize, alignment: usize, ret: usize };
-    const Remap = struct { ptr: usize, alignment: usize, new_len: usize, ret: usize };
-    const Resize = struct { ptr: usize, alignment: usize, new_len: usize };
-    const Free = struct { ptr: usize, alignment: usize };
-};
-
-const ItemIter = struct {
-    split: std.mem.SplitIterator(u8, .scalar),
-
-    pub fn next(self: *@This()) ?Item {
-        const line = self.split.next() orelse return null;
-        if (line.len == 0) return null;
-
-        var line_splitter = std.mem.splitScalar(u8, line, ' ');
-
-        return switch (line_splitter.first()[0]) {
-            'a' => blk: {
-                const out_ptr = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID PTR");
-                const len = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID LEN");
-                const alignment = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID ALIGN");
-
-                break :blk .{ .allocation = .{
-                    .len = len,
-                    .alignment = alignment,
-                    .ret = out_ptr,
-                } };
-            },
-
-            'm' => blk: {
-                const in_ptr = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID PTR");
-                const new_len = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID LEN");
-                const alignment = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID ALIGN");
-                const ret = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID RET");
-
-                break :blk .{ .remap = .{
-                    .ptr = in_ptr,
-                    .alignment = alignment,
-                    .new_len = new_len,
-                    .ret = ret,
-                } };
-            },
-
-            's' => blk: {
-                const in_ptr = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID PTR");
-                const new_len = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID LEN");
-                const alignment = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID ALIGN");
-
-                break :blk .{ .resize = .{
-                    .ptr = in_ptr,
-                    .new_len = new_len,
-                    .alignment = alignment,
-                } };
-            },
-
-            'f' => blk: {
-                const in_ptr = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID PTR");
-                const alignment = std.fmt.parseInt(usize, line_splitter.next().?, 10) catch @panic("INVALID ALIGN");
-
-                break :blk .{ .free = .{
-                    .ptr = in_ptr,
-                    .alignment = alignment,
-                } };
-            },
-
-            else => unreachable,
-        };
-    }
-};
-
-pub fn run(path: [:0]const u8, alloc: Allocator) !void {
+    const path = try std.fs.path.joinZ(alloc, file_path);
     const file = try std.fs.cwd().openFileZ(path, .{});
     defer file.close();
 
-    var decompress = try std.compress.xz.decompress(alloc, file.reader());
-    defer decompress.deinit();
-
-    // const source = try file.readToEndAllocOptions(alloc, 1 << 27, null, @alignOf(u8), 0);
-    const source = try decompress.reader().readAllAlloc(alloc, 1 << 27);
-    defer alloc.free(source);
-
-    var iter: ItemIter = .{ .split = std.mem.splitScalar(u8, source, '\n') };
-
-    var prng = std.Random.DefaultPrng.init(0xbadc0de);
-    const rand = prng.random();
-
-    var ptr_map: std.AutoHashMapUnmanaged(usize, []u8) = .empty;
-    defer ptr_map.deinit(alloc);
-
-    while (iter.next()) |action| switch (action) {
-        .allocation => |a| {
-            const ptr = alloc.rawAlloc(a.len, .fromByteUnits(a.alignment), 0) orelse return error.Oom;
-
-            try ptr_map.put(alloc, a.ret, ptr[0..a.len]);
-
-            touchAllocation(rand, ptr[0..a.len]);
-        },
-        .remap => |r| {
-            const slice = ptr_map.get(r.ptr) orelse @panic("NOT FOUND");
-
-            const ret: [*]u8 = alloc.rawRemap(slice, .fromByteUnits(r.alignment), r.new_len, 0) orelse blk: {
-                const new_slice = try alloc.alloc(u8, r.new_len);
-                const end = @min(slice.len, r.new_len);
-                @memcpy(new_slice[0..end], slice[0..end]);
-                alloc.free(slice);
-
-                break :blk @ptrCast(new_slice);
-            };
-
-            touchAllocation(rand, ret[0..r.new_len]);
-
-            if (r.ptr != r.ret) {
-                std.debug.assert(ptr_map.remove(r.ptr));
-                try ptr_map.put(alloc, r.ret, ret[0..r.new_len]);
-            } else {
-                try ptr_map.put(alloc, r.ptr, ret[0..r.new_len]);
-            }
-        },
-        .resize => |r| {
-            const slice = ptr_map.get(r.ptr) orelse @panic("NOT FOUND");
-
-            const ret = alloc.rawResize(slice, .fromByteUnits(r.alignment), r.new_len, 0);
-
-            if (ret) {
-                std.debug.assert(ptr_map.remove(r.ptr));
-                try ptr_map.put(alloc, r.ptr, slice.ptr[0..r.new_len]);
-
-                touchAllocation(rand, slice);
-            }
-        },
-        .free => |f| {
-            const slice = ptr_map.get(f.ptr) orelse @panic("NOT FOUND");
-
-            alloc.rawFree(slice, .fromByteUnits(f.alignment), 0);
-
-            std.debug.assert(ptr_map.remove(f.ptr));
-        },
-    };
+    const header: Header = try .parse(alloc, file);
+    return try .parse(alloc, header, file);
 }
 
-pub const tests = [_]TestInformation{
+fn playback(alloc: Allocator, thread_count: usize, file_path: []const []const u8) !void {
+    assert(thread_count > 0);
+
+    var arena: ArenaAllocator = .init(alloc);
+    const arena_alloc = arena.allocator();
+    defer arena.deinit();
+
+    const record = try parse(&arena, file_path);
+
+    const thread_sequences: []const []Sequence = blk: {
+        assert(record.sequences.len > thread_count);
+
+        const sequences_per_thread = record.sequences.len / thread_count;
+        const sequences_remaining = record.sequences.len % thread_count;
+        assert(sequences_remaining < thread_count);
+
+        const thread_sequences = try arena_alloc.alloc([]Sequence, thread_count);
+
+        for (thread_sequences[0..sequences_remaining]) |*seq|
+            seq.* = try arena_alloc.alloc(Sequence, sequences_per_thread + 1);
+
+        for (thread_sequences[sequences_remaining..]) |*seq|
+            seq.* = try arena_alloc.alloc(Sequence, sequences_per_thread);
+
+        // Interleave sequences to ensure thread transfers actually transfer
+        // threads
+        for (record.sequences, 0..) |seq, i| {
+            const idx = i / thread_count;
+            const thread_idx = i % thread_count;
+
+            thread_sequences[thread_idx][idx] = .{ .updates = seq };
+        }
+
+        break :blk thread_sequences;
+    };
+
+    const threads = try alloc.alloc(Thread, thread_count);
+    defer alloc.free(threads);
+
+    for (threads, thread_sequences) |*t, s| t.* = try .spawn(
+        .{},
+        playbackThread,
+        .{ alloc, s, record.updates },
+    );
+    for (threads) |t| t.join();
+}
+
+fn playbackThread(alloc: Allocator, sequences: []Sequence, updates: []Update.Playback) !void {
+    var sequences_completed: usize = 0;
+
+    // var highest_allowed_idx: usize = sequences[0].updates[0].to();
+
+    while (sequences_completed < sequences.len) {
+        inner: for (sequences) |*seq| {
+            if (seq.idx >= seq.updates.len) continue :inner;
+
+            // if (seq.updates[0].to() > highest_allowed_idx) {
+            //     // Always increment to ensure we never get stuck
+            //     highest_allowed_idx += 1;
+            //     continue :outer;
+            // }
+
+            const update = &updates[seq.updates[seq.idx].to()];
+            switch (update.action) {
+                .alloc => {
+                    defer assert(update.pointer != .null);
+                    const ret = alloc.rawAlloc(update.size, update.alignm, 0) orelse
+                        return error.OutOfMemory;
+
+                    assert(update.pointer == .null);
+                    update.pointer = .from(ret);
+                },
+
+                .remap => {
+                    defer assert(update.pointer != .null);
+                    assert(seq.idx > 0);
+                    const prev_update = &updates[seq.updates[seq.idx - 1].to()];
+
+                    const mem: []u8 = prev_update.pointer.to()[0..prev_update.size];
+
+                    const ret = alloc.rawRemap(mem, update.alignm, update.size, 0) orelse blk: {
+                        // In case remap fails, do the naive alternative
+
+                        const ret = alloc.rawAlloc(update.size, update.alignm, 0) orelse
+                            return error.OutOfMemory;
+
+                        const end = @min(prev_update.size, update.size);
+                        @memcpy(ret[0..end], mem[0..end]);
+
+                        alloc.rawFree(mem, update.alignm, 0);
+
+                        break :blk ret;
+                    };
+
+                    assert(update.pointer == .null);
+                    update.pointer = .from(ret);
+                },
+
+                .resize => {
+                    defer assert(update.pointer != .null);
+                    assert(seq.idx > 0);
+                    const prev_update = &updates[seq.updates[seq.idx - 1].to()];
+
+                    const mem: []u8 = prev_update.pointer.to()[0..prev_update.size];
+
+                    const resized = alloc.rawResize(mem, update.alignm, update.size, 0);
+
+                    if (!resized) {
+                        // In case resize fails, do the naive alternative
+
+                        const ret = alloc.rawAlloc(update.size, update.alignm, 0) orelse
+                            return error.OutOfMemory;
+
+                        const end = @min(prev_update.size, update.size);
+                        @memcpy(ret[0..end], mem[0..end]);
+
+                        alloc.rawFree(mem, update.alignm, 0);
+
+                        assert(update.pointer == .null);
+                        update.pointer = .from(ret);
+                    } else {
+                        update.pointer = prev_update.pointer;
+                    }
+                },
+
+                .free => {
+                    defer assert(update.pointer == .null);
+                    assert(seq.idx > 0);
+                    const prev_update = &updates[seq.updates[seq.idx - 1].to()];
+
+                    const mem: []u8 = prev_update.pointer.to()[0..update.size];
+                    alloc.rawFree(mem, update.alignm, 0);
+
+                    update.pointer = .null;
+                },
+
+                .transfer => |*b| if (seq.idx == 0) {
+                    // Transfer is the first update, we need to wait for
+                    // it to happen. We do this by continuing the loop
+                    // instead of letting it play out and increase the
+                    // idx.
+                    if (!b.load(.acquire))
+                        continue :inner;
+
+                    // From here on the other thread should have set the pointer
+                    assert(update.pointer != .null);
+                } else {
+                    assert(seq.idx > 0);
+                    const prev_update = &updates[seq.updates[seq.idx - 1].to()];
+
+                    // Set the pointer for the next thread
+                    assert(update.pointer == .null);
+                    update.pointer = prev_update.pointer;
+
+                    b.store(true, .release);
+                },
+            }
+
+            // Increment on success
+            // highest_allowed_idx = @max(
+            //     highest_allowed_idx,
+            //     seq.updates[seq.idx].to(),
+            // );
+
+            seq.idx += 1;
+            if (seq.idx >= seq.updates.len)
+                sequences_completed += 1;
+        }
+    }
+}
+
+pub const playbacks = [_]TestInformation{
     .{
         .name = "Self playback",
         .test_fn = &selfPlayback,
-        .timeout_ns = std.time.ns_per_s,
-        .rerun = .{
-            .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s,
+        .timeout_ns = std.time.ns_per_s * 5,
+        .charactaristics = .{
+            .multithreaded = true,
         },
-    },
-    .{
-        .name = "Zig compiler playback",
-        .test_fn = &zigCompPlayback,
-        .timeout_ns = std.time.ns_per_s * 90,
+        .arg = .{ .exponential = .{ .n = 5 } },
         .rerun = .{
             .run_at_least = 1,
-            .run_for_ns = std.time.ns_per_s,
+            .run_for_ns = std.time.ns_per_s * 5,
         },
     },
 };
 
-fn selfPlayback(alloc: Allocator, _: ArgInt) !void {
-    try run("playback/self.rec.xz", alloc);
-}
+const playback_base = "playback";
 
-fn zigCompPlayback(alloc: Allocator, _: ArgInt) !void {
-    try run("playback/zig-compiler.rec.xz", alloc);
+fn selfPlayback(alloc: Allocator, thread_count: ArgInt) !void {
+    try playback(alloc, thread_count, &.{ playback_base, "self.rec" });
 }
 
 const std = @import("std");
 const runner = @import("runner");
 const common = @import("common.zig");
+const recording = @import("recording");
 
 const touchAllocation = common.touchAllocation;
+const assert = std.debug.assert;
 
 const File = std.fs.File;
 const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const Alignment = std.mem.Alignment;
 const TestInformation = runner.TestInformation;
 const ArgInt = runner.TestArg.ArgInt;
+const Header = recording.Header;
+const Body = recording.Body;
+const Update = recording.Update;
+const Sequence = recording.Sequence;
+const Index = recording.Index;
+const Thread = std.Thread;

@@ -6,5 +6,5 @@ pub const default =
 
 pub const correctness = @import("correctness.zig").correctness;
 pub const micro = @import("micro.zig").micro;
-pub const playback = @import("playback.zig").tests;
+pub const playback = @import("playback.zig").playbacks;
 pub const bench = @import("bench.zig").bench;

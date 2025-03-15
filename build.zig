@@ -16,6 +16,7 @@ pub fn build(b: *Build) void {
     const use_libc = b.option(bool, "useLibc", "Link in external allocators") orelse true;
 
     const runner_mod = runner(b, target, optimize);
+    const recording_mod = recordingMod(b, target, optimize);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -23,8 +24,12 @@ pub fn build(b: *Build) void {
         .optimize = optimize,
         .link_libc = use_libc,
     });
+    exe_mod.addImport("recording", recording_mod);
     exe_mod.addImport("runner", runner_mod);
-    exe_mod.addImport("tests", tests(b, runner_mod, target, optimize));
+    exe_mod.addImport("tests", tests(b, target, optimize, .{
+        .runner = runner_mod,
+        .recording = recording_mod,
+    }));
 
     const opts = b.addOptions();
 
@@ -68,6 +73,14 @@ pub fn build(b: *Build) void {
     installExternalsStep(b, native_target);
 }
 
+fn recordingMod(b: *Build, target: Build.ResolvedTarget, opt: OptimizeMode) *Module {
+    return b.addModule("recording", .{
+        .root_source_file = b.path("tools/recording.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+}
+
 fn installExternalsStep(b: *Build, target: Build.ResolvedTarget) void {
     const install_step = b.step("externals", "Install external allocators (requires nix)");
 
@@ -97,13 +110,17 @@ pub fn runner(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode) *
     });
 }
 
-pub fn tests(b: *Build, runner_mod: *Module, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
+pub fn tests(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode, mods: struct {
+    runner: *Module,
+    recording: *Module,
+}) *Module {
     const tests_mod = b.createModule(.{
         .root_source_file = b.path("tests/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    tests_mod.addImport("runner", runner_mod);
+    tests_mod.addImport("runner", mods.runner);
+    tests_mod.addImport("recording", mods.recording);
 
     return tests_mod;
 }
