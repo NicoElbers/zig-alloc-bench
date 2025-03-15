@@ -135,7 +135,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     const base_alloc: Allocator = switch (@import("builtin").mode) {
-        .Debug => gpa.allocator(),
+        .Debug, .ReleaseSafe => gpa.allocator(),
         else => std.heap.smp_allocator,
     };
 
@@ -147,16 +147,25 @@ pub fn main() !void {
         .tty = std.io.tty.detectConfig(std.io.getStdOut()),
     });
 
+    // var record: recording.RecordingAllocator = .init(base_alloc);
+    // defer record.deinit();
+
+    // const rec_alloc = record.allocator();
+
     try runner.runAll(
         base_alloc,
+        // rec_alloc,
         &tests.default,
         &constructors.default,
         opts,
     );
+
+    // try record.finish("dump.rec");
 }
 
 const std = @import("std");
 const runner = @import("runner");
+const recording = @import("recording");
 
 const tests = @import("tests");
 const constructors = @import("constructors");
