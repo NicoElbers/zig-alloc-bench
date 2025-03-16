@@ -103,7 +103,7 @@ fn installExternalsStep(b: *Build, target: Build.ResolvedTarget) void {
 }
 
 pub fn runner(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode) *Module {
-    return b.createModule(.{
+    return b.addModule("runner", .{
         .root_source_file = b.path("src/runner.zig"),
         .target = target,
         .optimize = optimize,
@@ -114,7 +114,7 @@ pub fn tests(b: *Build, target: Build.ResolvedTarget, optimize: OptimizeMode, mo
     runner: *Module,
     recording: *Module,
 }) *Module {
-    const tests_mod = b.createModule(.{
+    const tests_mod = b.addModule("tests", .{
         .root_source_file = b.path("tests/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -131,7 +131,7 @@ pub fn constructors(b: *Build, use_libc: bool, runner_mod: *Module, target: Buil
         .optimize = optimize,
     });
 
-    const constructors_mod = b.createModule(.{
+    const constructors_mod = b.addModule("constructors", .{
         .root_source_file = b.path("constructors/root.zig"),
         .target = target,
         .optimize = optimize,
