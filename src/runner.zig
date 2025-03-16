@@ -106,7 +106,7 @@ pub const ConstructorCharacteristics = struct {
     thread_safe: bool = true,
     safety: bool = false,
 
-    pub const default = .{};
+    pub const default: ConstructorCharacteristics = .{};
 };
 pub const ContructorInformation = struct {
     name: []const u8,

@@ -1,11 +1,11 @@
 .{
-    .name = "alloc-bench",
+    .name = .alloc_bench,
     .version = "0.1.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0",
     .dependencies = .{
         .rpmalloc = .{
-            .url = "git+https://github.com/nicoelbers/rpmalloc-bindings-zig#b5478261192aca727ced161afd0a52dd74257571",
-            .hash = "1220fea8aae647f1daad386e564d5a2b1ca5ba272656c57f6d497c88e883c6d725f1",
+            .url = "git+https://github.com/NicoElbers/rpmalloc-bindings-zig#460f09db9e1a05e5c492cb1180e8a684fe82bc2f",
+            .hash = "rpmalloc_bindings-0.14.0-vp5QcJAEAADNtKXMyhaRDn6m2o-b81gxLHOstinWAPXo",
         },
     },
     .paths = .{
@@ -19,4 +19,6 @@
         "external_allocators",
         "README.md",
     },
+
+    .fingerprint = 0x65e6242f6dd0ae98,
 }
