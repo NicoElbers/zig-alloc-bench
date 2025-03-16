@@ -17,6 +17,7 @@
         "playback",
         "externals.zig",
         "external_allocators",
+        "tools",
         "README.md",
     },
 
