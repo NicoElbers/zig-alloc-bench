@@ -342,13 +342,10 @@ fn appendToArrayList(alloc: Allocator, thread_count: ArgInt) !void {
 }
 
 fn appendToLinkedListThread(alloc: Allocator, count: ArgInt) !void {
-    const List = DoublyLinkedList(u8);
-    const Node = List.Node;
-
-    var list: List = .{};
+    var list: DoublyLinkedList = .{};
     defer while (list.pop()) |n| alloc.destroy(n);
 
-    for (0..count) |_| list.append(try alloc.create(Node));
+    for (0..count) |_| list.append(try alloc.create(DoublyLinkedList.Node));
 }
 
 fn appendToLinkedList(alloc: Allocator, thread_count: ArgInt) !void {

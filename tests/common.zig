@@ -29,10 +29,6 @@ pub inline fn allocRange(comptime T: type, rand: Random, alloc: Allocator, min: 
     return alloc.alloc(T, rand.intRangeAtMost(usize, min, max));
 }
 
-pub inline fn allocAlignedRange(comptime T: type, rand: Random, alloc: Allocator, comptime alignment: Alignment, min: usize, max: usize) ![]align(alignment.toByteUnits()) T {
-    return alloc.alignedAlloc(T, alignment.toByteUnits(), rand.intRangeAtMost(usize, min, max));
-}
-
 const std = @import("std");
 
 const Random = std.Random;

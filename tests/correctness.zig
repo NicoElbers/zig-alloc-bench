@@ -95,7 +95,7 @@ fn pageAlign(alloc: Allocator, _: ArgInt) !void {
     var validationAllocator = std.mem.validationWrap(alloc);
     const allocator = validationAllocator.allocator();
 
-    var slice = try allocator.alignedAlloc(u8, alignment.toByteUnits(), 500);
+    var slice = try allocator.alignedAlloc(u8, alignment, 500);
     try std.testing.expect(alignment.check(@intFromPtr(slice.ptr)));
 
     if (allocator.resize(slice, 100)) {
