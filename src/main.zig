@@ -116,6 +116,8 @@ pub fn parseArgs(alloc: Allocator, default: Config) !Config {
             opts.min_runtime_ns = std.fmt.parseInt(u64, val, 10) catch fatal(arg, .{ .invalid = u64 });
         } else if (eql(u8, arg, "--debug") or eql(u8, arg, "-d")) {
             opts.debug = true;
+        } else if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) {
+            return error.Help;
         } else fatal(arg, .{ .unknown = enum { type, filter, tty, prefix, dry, min_time } });
     }
 
@@ -142,10 +144,67 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(base_alloc);
     defer arena.deinit();
 
-    const opts = try parseArgs(arena.allocator(), .{
+    const opts = parseArgs(arena.allocator(), .{
         .type = .testing,
         .tty = std.io.tty.detectConfig(std.io.getStdOut()),
-    });
+    }) catch |err| switch (err) {
+        error.Help => {
+            const writer = std.io.getStdOut().writer().any();
+            try writer.writeAll("Tests:\n");
+
+            var buf: [1024]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&buf);
+            const buf_writer = fbs.writer();
+
+            for (&tests.default) |tst| {
+                if (tst.description) |desc| {
+                    defer fbs.reset();
+                    for (desc) |char| switch (char) {
+                        '\n' => try buf_writer.writeAll("\n   "),
+                        else => try buf_writer.writeByte(char),
+                    };
+
+                    try writer.print(
+                        \\  {s}
+                        \\   {s}
+                        \\
+                    , .{ tst.name, fbs.getWritten() });
+                } else {
+                    try writer.print(
+                        \\  {s}
+                        \\
+                        \\
+                    , .{tst.name});
+                }
+            }
+
+            try writer.writeAll("Constructors:\n");
+            for (&constructors.default) |constr| {
+                if (constr.description) |desc| {
+                    defer fbs.reset();
+                    for (desc) |char| switch (char) {
+                        '\n' => try buf_writer.writeAll("\n   "),
+                        else => try buf_writer.writeByte(char),
+                    };
+
+                    try writer.print(
+                        \\  {s}
+                        \\   {s}
+                        \\
+                    , .{ constr.name, fbs.getWritten() });
+                } else {
+                    try writer.print(
+                        \\  {s}
+                        \\
+                        \\
+                    , .{constr.name});
+                }
+            }
+
+            return;
+        },
+        else => return err,
+    };
 
     // var record: recording.RecordingAllocator = .init(base_alloc);
     // defer record.deinit();
